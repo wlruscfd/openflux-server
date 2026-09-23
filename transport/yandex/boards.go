@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	mrand "math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +34,11 @@ const (
 	boardsPingInterval  = 20 * time.Second
 	boardsReadDeadline  = 90 * time.Second
 	boardsHandshakeWait = 15 * time.Second
+
+	// boardsCaptchaCooldown is a floor under the usual attempt-scaled backoff for captcha failures, same rationale as yandex.go's captchaCooldown: retrying fast just re-triggers the same block.
+	boardsCaptchaCooldown = 3 * time.Minute
+
+	boardsMaxAttempt = 10
 )
 
 type boardsInfo struct {
@@ -90,6 +97,12 @@ type BoardsTransport struct {
 
 	closeOnce sync.Once
 	done      chan struct{}
+
+	cookiesMu       sync.Mutex
+	providedCookies string
+
+	wakeMu   sync.Mutex
+	wakeChan chan struct{}
 }
 
 func NewBoardsTransport(rawURL string, config transport.TransportConfig) *BoardsTransport {
@@ -100,6 +113,9 @@ func NewBoardsTransport(rawURL string, config transport.TransportConfig) *Boards
 	}
 }
 
+// Start returns as soon as the URL's hash is validated - the actual authorize+connect happens in
+// connectLoop's own goroutine, same as YandexDocsTransport, so a slow first attempt (or a captcha
+// solve) never blocks the caller.
 func (t *BoardsTransport) Start() error {
 	if err := t.BaseTransport.Start(); err != nil {
 		return err
@@ -109,17 +125,10 @@ func (t *BoardsTransport) Start() error {
 		return fmt.Errorf("boards: no hash in URL %q", t.url)
 	}
 
-	name := randomGuestName()
-	info, err := t.authorize(hash, name)
-	if err != nil {
-		return fmt.Errorf("boards auth: %w", err)
-	}
-	utils.Debugf("[BOARDS] auth OK: hash=%s name=%q userHash=%s dashboard=%q wsHost=%s",
-		info.hash, info.name, info.userHash, info.dashboard, info.wsHost)
-
 	t.closeOnce = sync.Once{}
 	t.done = make(chan struct{})
-	utils.SafeGo("boards.connect", func() { t.connectLoop(info) })
+	name := randomGuestName()
+	utils.SafeGo("boards.connect", func() { t.connectLoop(hash, name) })
 
 	return nil
 }
@@ -131,6 +140,41 @@ func (t *BoardsTransport) Stop() error {
 	}
 	t.SetConnected(false)
 	return t.BaseTransport.Stop()
+}
+
+// ForceReconnect drops the live session so connectLoop redials immediately, or - if it's currently
+// sitting out a backoff/captcha-cooldown wait instead - cuts that wait short. Without this override
+// a network change (Android's own network-change callback calls this) would sit unnoticed until
+// boardsReadDeadline (90s) expires on its own, and a solved CAPTCHA would wait out the rest of
+// boardsCaptchaCooldown for nothing.
+func (t *BoardsTransport) ForceReconnect() {
+	if s := t.session.Load(); s != nil && s.Conn != nil {
+		s.Conn.Close()
+		return
+	}
+	t.wakeMu.Lock()
+	wake := t.wakeChan
+	t.wakeChan = nil
+	t.wakeMu.Unlock()
+	if wake != nil {
+		close(wake)
+	}
+}
+
+// ProvideCookies feeds a solved-CAPTCHA session's cookies (from the client app's WebView, via
+// transport.EventCaptchaRequired) into the next authorize attempt, and forces a reconnect so it
+// doesn't sit out the rest of boardsCaptchaCooldown now that the block is actually cleared.
+func (t *BoardsTransport) ProvideCookies(cookieStr string) {
+	t.cookiesMu.Lock()
+	t.providedCookies = cookieStr
+	t.cookiesMu.Unlock()
+	t.ForceReconnect()
+}
+
+func (t *BoardsTransport) getProvidedCookies() string {
+	t.cookiesMu.Lock()
+	defer t.cookiesMu.Unlock()
+	return t.providedCookies
 }
 
 func (t *BoardsTransport) Send(data []byte) error {
@@ -189,9 +233,21 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 	return nil
 }
 
+// errBoardsCaptchaBlocked marks an authorize() failure where the PoW solve itself failed (as
+// opposed to a plain network error) - connectLoop gives this a much longer cooldown, same
+// rationale as errCaptchaBlocked in yandex.go.
+var errBoardsCaptchaBlocked = fmt.Errorf("boards: captcha solve failed")
+
 // authorize: GET /whiteboard/?hash=<hash> (may redirect to showcaptchafast) -> POST request-guest-token -> POST get-whiteboard-info.
 func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 	jar, _ := cookiejar.New(nil)
+	docURL := "https://" + boardsBase + "/whiteboard/?hash=" + hash
+	if provided := t.getProvidedCookies(); provided != "" {
+		if u, perr := url.Parse(docURL); perr == nil {
+			jar.SetCookies(u, parseCookieHeader(provided))
+		}
+	}
+
 	client := &http.Client{
 		Jar:       jar,
 		Timeout:   15 * time.Second,
@@ -201,13 +257,12 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		},
 	}
 
-	docURL := "https://" + boardsBase + "/whiteboard/?hash=" + hash
-
 	if err := t.getAllowCaptcha(client, docURL, hash); err != nil {
 		if err == errCaptchaRequired {
 			utils.Debugf("[BOARDS] captcha required, solving...")
+			t.EmitEvent(transport.EventCaptchaRequired, docURL)
 			if _, cerr := solveCaptcha(docURL, jar, boardsUA, client.Transport); cerr != nil {
-				return boardsInfo{}, fmt.Errorf("captcha solve: %w", cerr)
+				return boardsInfo{}, fmt.Errorf("%w: %v", errBoardsCaptchaBlocked, cerr)
 			}
 			utils.Debugf("[BOARDS] captcha solved, re-fetching whiteboard")
 
@@ -244,6 +299,16 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 
 	var cookies []*http.Cookie
 	cookies = append(cookies, jar.Cookies(u)...)
+
+	if len(cookies) > 0 {
+		parts := make([]string, len(cookies))
+		for i, c := range cookies {
+			parts[i] = c.Name + "=" + c.Value
+		}
+		t.cookiesMu.Lock()
+		t.providedCookies = strings.Join(parts, "; ")
+		t.cookiesMu.Unlock()
+	}
 
 	wsHost := state["ws_host"]
 	if wsHost == "" {
@@ -387,7 +452,11 @@ func randomGuestName() string {
 	return "guest_" + hex.EncodeToString(b[:])
 }
 
-func (t *BoardsTransport) connectLoop(info boardsInfo) {
+// connectLoop re-authorizes on every single attempt, not just once - boards' JWT/session cookies
+// don't survive indefinitely, so retrying a dead WS with stale credentials from the first attempt
+// would fail forever after any disconnect. Same idea as YandexDocsTransport calling fetchDocInfo
+// fresh on every connectToDoc attempt.
+func (t *BoardsTransport) connectLoop(hash, name string) {
 	attempt := 0
 	for {
 		select {
@@ -395,18 +464,52 @@ func (t *BoardsTransport) connectLoop(info boardsInfo) {
 			return
 		default:
 		}
-		if err := t.connectAndServe(info); err != nil {
-			utils.Debugf("[BOARDS] ws error: %v", err)
+
+		t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
+
+		info, err := t.authorize(hash, name)
+		if err == nil {
+			err = t.connectAndServe(attempt, info)
 		}
 		t.SetConnected(false)
+
+		delay := reconnectBackoffBoards(attempt)
+		reason := "boards_error"
+		if errors.Is(err, errBoardsCaptchaBlocked) {
+			reason = "captcha_blocked"
+			if delay < boardsCaptchaCooldown {
+				delay = boardsCaptchaCooldown
+			}
+		}
+		cause := "connection closed"
+		if err != nil {
+			cause = strings.ReplaceAll(err.Error(), "\n", " ")
+			utils.Debugf("[BOARDS] attempt %d failed: %v", attempt+1, err)
+		}
+		t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", attempt+1, int(delay.Seconds()), reason, cause))
+
+		wake := make(chan struct{})
+		t.wakeMu.Lock()
+		t.wakeChan = wake
+		t.wakeMu.Unlock()
+
 		select {
 		case <-t.done:
 			return
-		case <-time.After(reconnectBackoffBoards(attempt)):
+		case <-time.After(delay):
+		case <-wake:
+			utils.Debugf("[BOARDS] backoff wait cut short by ForceReconnect")
 		}
+
+		t.wakeMu.Lock()
+		if t.wakeChan == wake {
+			t.wakeChan = nil
+		}
+		t.wakeMu.Unlock()
+
 		attempt++
-		if attempt > 10 {
-			attempt = 10
+		if attempt > boardsMaxAttempt {
+			attempt = boardsMaxAttempt
 		}
 	}
 }
@@ -427,7 +530,7 @@ func reconnectBackoffBoards(n int) time.Duration {
 	return d
 }
 
-func (t *BoardsTransport) connectAndServe(info boardsInfo) error {
+func (t *BoardsTransport) connectAndServe(attempt int, info boardsInfo) error {
 	wsURL := fmt.Sprintf("wss://%s/socket.io/?EIO=4&transport=websocket", info.wsHost)
 
 	header := http.Header{}
@@ -469,16 +572,19 @@ func (t *BoardsTransport) connectAndServe(info boardsInfo) error {
 	sess.participant.Store(&participant)
 	sess.creatorHash.Store(&creator)
 	t.session.Store(sess)
+	// Cleared on every exit path from here on, not just the handshake-failure one below - otherwise
+	// ForceReconnect can't tell a torn-down connection from a live one and silently does nothing.
+	defer t.session.Store(nil)
 
 	if err := t.handshake(sess); err != nil {
 		conn.Close()
-		t.session.Store(nil)
 		return fmt.Errorf("handshake: %w", err)
 	}
 
 	_ = conn.SetReadDeadline(time.Time{})
 
 	t.SetConnected(true)
+	t.EmitEvent(transport.EventConnected, strconv.Itoa(attempt+1))
 	utils.SafeGo("boards.writer", func() { t.writerLoop(sess) })
 
 	kaStop := make(chan struct{})
