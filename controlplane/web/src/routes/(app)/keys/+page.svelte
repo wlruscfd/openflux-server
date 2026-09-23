@@ -334,6 +334,7 @@
 				<select class="input" bind:value={transport}>
 					<option value="yandex">yandex</option>
 					<option value="yandex_multistream">yandex_multistream</option>
+					<option value="boards">boards</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>

@@ -201,8 +201,8 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
-		if k.Transport != "yandex" && k.Transport != "yandex_multistream" {
-			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream transports today", id)
+		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" {
+			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards transports today", id)
 			continue
 		}
 		if k.Transport == "yandex_multistream" && len(k.DocURLs) < 2 {
@@ -398,14 +398,23 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 
 	var trans transport.Transport
 	label := k.DocURL
-	if k.Transport == "yandex_multistream" {
+	switch k.Transport {
+	case "boards":
+		if k.E2EEncryption {
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, fmt.Errorf("key %s: boards transport doesn't support e2e_encryption yet", k.ID)
+		}
+		trans = yandex.NewBoardsTransport(k.DocURL, transport.DefaultConfig())
+	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
 			streams[i] = wrapStream(yandex.NewYandexDocsTransport(url, transport.DefaultConfig()), i, true)
 		}
 		trans = transport.NewMultiStreamTransport(streams)
 		label = strings.Join(k.DocURLs, ",")
-	} else {
+	default:
 		trans = wrapStream(yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig()), 0, false)
 	}
 	if err := trans.Start(); err != nil {
