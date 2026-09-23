@@ -77,6 +77,14 @@ export XCODE_PATH="<your Xcode.app path>" # optional, defaults to /Applications/
 
 ### Setting up an exit node
 
+If Yandex serves a CAPTCHA instead of the doc (`yandex`/`yandex_multistream` transport only), the
+exit node tries to clear it unattended with a shared, lazily-started headless Chrome/Chromium
+(`transport/yandex/captchasolver.go`) - many CAPTCHAs turn out to be a JS/behavioral check a real
+browser passes on its own within seconds. This is best-effort: it needs `chromium` (or
+`google-chrome`) on `PATH` (`deploy/install.sh` installs it, non-fatally, when you opt to run a
+node), and a genuine interactive puzzle just times out and falls back to the normal
+cooldown-and-retry - there's no way around that one without a human or a paid solving service.
+
 The exit node reaches the real internet in one of two modes (`--mode`):
 
 - **raw** (default) — gvisor forwards raw IP packets through a real raw socket (needs root)

@@ -330,6 +330,7 @@ func (o *Orchestrator) startRelayBridgeWorker(k RemoteKey) (*worker, error) {
 
 	yd := yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig())
 	yd.EnableSelfCompression()
+	yd.EnableHeadlessCaptchaSolving()
 	if err := yd.Start(); err != nil {
 		return nil, err
 	}
@@ -380,6 +381,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 
 	// For yandex_multistream, each stream must compress/encrypt itself before MultiStreamTransport sees the data, since Send() reads streamIndex off what it assumes is a raw header.
 	wrapStream := func(yd *yandex.YandexDocsTransport, idx int, perStreamKey bool) transport.Transport {
+		yd.EnableHeadlessCaptchaSolving()
 		if !k.E2EEncryption {
 			yd.EnableSelfCompression()
 			return yd

@@ -112,6 +112,9 @@ func main() {
 	selfCompressingYandex := func(url string) transport.Transport {
 		yd := yandex.NewYandexDocsTransport(url, config)
 		yd.EnableSelfCompression()
+		if *exitNode {
+			yd.EnableHeadlessCaptchaSolving()
+		}
 		return yd
 	}
 

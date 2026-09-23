@@ -141,6 +141,33 @@ type YandexDocsTransport struct {
 	// Kept for the transport's lifetime and resent on every future fetch, not just the next one -
 	// a session that looks continuously "returning" is also less likely to be re-flagged.
 	providedCookies string
+
+	// headlessCaptcha is set only by EnableHeadlessCaptchaSolving - exit-node use only, see its
+	// doc comment.
+	headlessCaptcha bool
+}
+
+// EnableHeadlessCaptchaSolving turns a CAPTCHA failure into an automatic, unattended solve attempt
+// via a shared headless Chrome/Chromium (see captchasolver.go), for exit-node use only: unlike the
+// client app, there's no user around to solve one by hand in a WebView. Best-effort - if
+// Chrome/Chromium isn't installed, or the page needs an interactive puzzle a headless browser
+// can't click through, this just fails quietly and the existing captchaCooldown retry takes over
+// exactly as it did before this existed.
+func (t *YandexDocsTransport) EnableHeadlessCaptchaSolving() {
+	t.headlessCaptcha = true
+}
+
+// tryHeadlessSolve runs in its own goroutine alongside the normal captchaCooldown wait - whichever
+// resolves first wins, since ProvideCookies (via ForceReconnect) cancels that wait the moment it
+// succeeds.
+func (t *YandexDocsTransport) tryHeadlessSolve(docURL string) {
+	cookies, err := SolveCaptcha(docURL)
+	if err != nil {
+		t.debugf("headless captcha solve failed, falling back to the normal cooldown: %v", err)
+		return
+	}
+	t.debugf("headless captcha solve succeeded, forcing a reconnect")
+	t.ProvideCookies(cookies)
 }
 
 func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
@@ -280,6 +307,9 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		if err != nil {
 			t.debugf("fetchDocInfo failed: %v", err)
 			if errors.Is(err, errCaptchaBlocked) {
+				if t.headlessCaptcha {
+					go t.tryHeadlessSolve(t.url)
+				}
 				t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, captchaCooldown)
 			} else {
 				t.scheduleReconnect(attempt, reasonFetchFailed, err)
