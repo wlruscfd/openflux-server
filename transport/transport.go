@@ -31,6 +31,10 @@ const (
 	EventConnecting = "connecting"
 	EventConnected  = "connected"
 	EventRetrying   = "retrying"
+	// EventCaptchaRequired's detail is the doc_url that needs solving - a headless fetch can't
+	// clear a CAPTCHA itself, so the app is expected to load it in a real WebView, let the user
+	// solve it, then feed the resulting cookies back (see YandexDocsTransport.ProvideCookies).
+	EventCaptchaRequired = "captcha_required"
 )
 
 type TransportStats struct {

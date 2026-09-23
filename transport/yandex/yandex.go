@@ -135,10 +135,34 @@ type YandexDocsTransport struct {
 
 	// tag identifies this instance's log lines on a node running many keys at once - a bare "[YDOCS]" line can't otherwise be traced back to which key it belongs to.
 	tag string
+
+	// providedCookies comes from a real browser session (a client-side WebView the user solved a
+	// CAPTCHA in) via ProvideCookies, since fetchDocInfo itself is headless and can't solve one.
+	// Kept for the transport's lifetime and resent on every future fetch, not just the next one -
+	// a session that looks continuously "returning" is also less likely to be re-flagged.
+	providedCookies string
 }
 
 func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
 	utils.Debugf("[YDOCS/%s] "+format, append([]interface{}{t.tag}, args...)...)
+}
+
+// ProvideCookies feeds a real browser session's cookies (harvested by the client app after the
+// user solves a CAPTCHA in a WebView pointed at the same doc_url) into subsequent doc fetches,
+// and cancels the remaining captchaCooldown wait to retry immediately rather than sit it out now
+// that the block is actually cleared.
+func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
+	t.Mu.Lock()
+	t.providedCookies = cookieStr
+	t.Mu.Unlock()
+	t.debugf("received %d bytes of externally-solved cookies, forcing a reconnect", len(cookieStr))
+	t.ForceReconnect()
+}
+
+func (t *YandexDocsTransport) getProvidedCookies() string {
+	t.Mu.RLock()
+	defer t.Mu.RUnlock()
+	return t.providedCookies
 }
 
 // EnableSelfCompression makes writerLoop zstd-compress a whole batch of raw packets once the peer's keepalive proves it understands zstdBatchMarker, beating per-packet LZ4's missed cross-packet redundancy; not for use alongside external CompressedTransport wrapping.
@@ -897,6 +921,9 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 
 	req, _ := http.NewRequest("GET", url, nil)
 	applyBrowserGetHeaders(req.Header)
+	if provided := t.getProvidedCookies(); provided != "" {
+		req.Header.Set("Cookie", provided)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return YandexDocsInfo{}, err
@@ -920,6 +947,7 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 		isCaptcha := strings.Contains(lower, "captcha")
 		if isCaptcha {
 			t.debugf("response looks like a CAPTCHA/bot-check page, not the doc editor")
+			t.EmitEvent(transport.EventCaptchaRequired, url)
 		}
 		preview := html
 		if len(preview) > 2000 {
