@@ -2,8 +2,13 @@ package yandex
 
 import "net/http"
 
-// browserUserAgent is a real, currently-plausible Firefox fingerprint; a convincing header set can't fix IP-reputation challenges, but an otherwise bare request (User-Agent only) was itself a detectable tell.
-const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
+// browserUserAgent is deliberately the bare, vague string and not a specific current browser
+// fingerprint: side-by-side testing from a real exit-node IP (same doc_url, same other headers,
+// only this value changed) showed Yandex's antibot CAPTCHA-walling every specific Firefox/Chrome/
+// Safari version tried - including this file's own former value - while a bare "Mozilla/5.0"
+// passed every time. A convincing *version* is apparently the tell on a datacenter IP, not an
+// unconvincing one; don't "fix" this back to a realistic-looking UA without re-testing first.
+const browserUserAgent = "Mozilla/5.0"
 
 // applyBrowserGetHeaders deliberately skips Accept-Encoding (would disable Go's transparent decompression) and Chromium-only Sec-Ch-Ua hints (a Firefox UA sending them is a bigger tell than sending neither).
 func applyBrowserGetHeaders(h http.Header) {
