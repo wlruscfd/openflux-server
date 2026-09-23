@@ -350,7 +350,7 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapGeneric(yandex.NewBoardsTransport(cfg.DocURL, transportConfig), cfg), nil
+		return wrapBatched(yandex.NewBoardsTransport(cfg.DocURL, transportConfig), cfg), nil
 	case "mailru":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
@@ -389,6 +389,13 @@ func wrapGeneric(inner transport.Transport, cfg Config) transport.Transport {
 		inner = transport.NewEncryptedTransport(inner, cfg.KeyToken, false)
 	}
 	return transport.NewCompressedTransport(inner)
+}
+
+func wrapBatched(inner transport.Transport, cfg Config) transport.Transport {
+	if cfg.E2EEncryption && cfg.KeyToken != "" {
+		inner = transport.NewEncryptedTransport(inner, cfg.KeyToken, false)
+	}
+	return transport.NewBatchedTransport(inner)
 }
 
 func sitePolicy(cfg Config) *gateway.SitePolicy {

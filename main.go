@@ -121,7 +121,7 @@ func main() {
 
 	switch *transportType {
 	case "boards":
-		trans = wrapCodec(yandex.NewBoardsTransport(globalDocUrl, config))
+		trans = transport.NewBatchedTransport(yandex.NewBoardsTransport(globalDocUrl, config))
 	case "yandex":
 		trans = selfCompressingYandex(globalDocUrl)
 	case "volga":

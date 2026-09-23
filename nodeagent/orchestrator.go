@@ -407,7 +407,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			}
 			return nil, fmt.Errorf("key %s: boards transport doesn't support e2e_encryption yet", k.ID)
 		}
-		trans = transport.NewCompressedTransport(yandex.NewBoardsTransport(k.DocURL, transport.DefaultConfig()))
+		trans = transport.NewBatchedTransport(yandex.NewBoardsTransport(k.DocURL, transport.DefaultConfig()))
 	case "mailru":
 		if k.E2EEncryption {
 			if portIdx >= 0 {
