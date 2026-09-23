@@ -113,9 +113,7 @@ func NewBoardsTransport(rawURL string, config transport.TransportConfig) *Boards
 	}
 }
 
-// Start returns as soon as the URL's hash is validated - the actual authorize+connect happens in
-// connectLoop's own goroutine, same as YandexDocsTransport, so a slow first attempt (or a captcha
-// solve) never blocks the caller.
+// Start returns immediately; the actual authorize+connect happens in connectLoop's own goroutine.
 func (t *BoardsTransport) Start() error {
 	if err := t.BaseTransport.Start(); err != nil {
 		return err
@@ -142,11 +140,7 @@ func (t *BoardsTransport) Stop() error {
 	return t.BaseTransport.Stop()
 }
 
-// ForceReconnect drops the live session so connectLoop redials immediately, or - if it's currently
-// sitting out a backoff/captcha-cooldown wait instead - cuts that wait short. Without this override
-// a network change (Android's own network-change callback calls this) would sit unnoticed until
-// boardsReadDeadline (90s) expires on its own, and a solved CAPTCHA would wait out the rest of
-// boardsCaptchaCooldown for nothing.
+// ForceReconnect drops the live session, or cuts short a backoff/captcha-cooldown wait if there's none yet.
 func (t *BoardsTransport) ForceReconnect() {
 	if s := t.session.Load(); s != nil && s.Conn != nil {
 		s.Conn.Close()
@@ -161,9 +155,7 @@ func (t *BoardsTransport) ForceReconnect() {
 	}
 }
 
-// ProvideCookies feeds a solved-CAPTCHA session's cookies (from the client app's WebView, via
-// transport.EventCaptchaRequired) into the next authorize attempt, and forces a reconnect so it
-// doesn't sit out the rest of boardsCaptchaCooldown now that the block is actually cleared.
+// ProvideCookies feeds solved-CAPTCHA cookies into the next authorize attempt and forces a reconnect.
 func (t *BoardsTransport) ProvideCookies(cookieStr string) {
 	t.cookiesMu.Lock()
 	t.providedCookies = cookieStr
@@ -233,9 +225,7 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 	return nil
 }
 
-// errBoardsCaptchaBlocked marks an authorize() failure where the PoW solve itself failed (as
-// opposed to a plain network error) - connectLoop gives this a much longer cooldown, same
-// rationale as errCaptchaBlocked in yandex.go.
+// errBoardsCaptchaBlocked marks an authorize() failure where the PoW solve itself failed.
 var errBoardsCaptchaBlocked = fmt.Errorf("boards: captcha solve failed")
 
 // authorize: GET /whiteboard/?hash=<hash> (may redirect to showcaptchafast) -> POST request-guest-token -> POST get-whiteboard-info.
@@ -452,10 +442,7 @@ func randomGuestName() string {
 	return "guest_" + hex.EncodeToString(b[:])
 }
 
-// connectLoop re-authorizes on every single attempt, not just once - boards' JWT/session cookies
-// don't survive indefinitely, so retrying a dead WS with stale credentials from the first attempt
-// would fail forever after any disconnect. Same idea as YandexDocsTransport calling fetchDocInfo
-// fresh on every connectToDoc attempt.
+// connectLoop re-authorizes on every attempt, not just once - stale credentials would fail forever after any disconnect otherwise.
 func (t *BoardsTransport) connectLoop(hash, name string) {
 	attempt := 0
 	for {
@@ -572,8 +559,7 @@ func (t *BoardsTransport) connectAndServe(attempt int, info boardsInfo) error {
 	sess.participant.Store(&participant)
 	sess.creatorHash.Store(&creator)
 	t.session.Store(sess)
-	// Cleared on every exit path from here on, not just the handshake-failure one below - otherwise
-	// ForceReconnect can't tell a torn-down connection from a live one and silently does nothing.
+	// Cleared on every exit path here, or ForceReconnect can't tell a torn-down connection from a live one.
 	defer t.session.Store(nil)
 
 	if err := t.handshake(sess); err != nil {
