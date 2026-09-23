@@ -44,6 +44,7 @@ func main() {
 	localIP := flag.String("local-ip", "", "Raw mode only: exit node egress IP, so the RST-drop iptables rule can be scoped with -s instead of host-wide")
 	portRangeSize := flag.Int("port-range-size", nodeagent.DefaultPortRangeSize, "Managed raw mode only: outbound ports reserved per concurrent key - lower fits more keys on this node, higher tolerates a single key opening more simultaneous connections at once (e.g. Telegram loading media) before new ones start failing")
 	codec := flag.String("codec", "legacy", "Wire codec for --transport volga/oneme/cupsonline/mailru: 'legacy' (default, per-packet LZ4 - unchanged) or 'batched' (coalesce bursts into one zstd-compressed message per transport send; both ends must agree - see README). Ignored for yandex/yandex_multistream, which auto-negotiate their own whole-batch zstd format with the peer - see README.")
+	captchaSolveMode := flag.String("captcha-solve-mode", "headless_browser", "Exit node only (yandex/yandex_multistream): how to react to a Yandex CAPTCHA with no user present to solve it - 'headless_browser' (default; try a shared headless Chrome/Chromium automatically, needs it on PATH - see README) or 'off' (just wait out the normal cooldown-and-retry)")
 	flag.StringVar(&globalDocUrl, "url", "http://#", "Document URL. If u use Yandex.Docs transport")
 	docUrls := flag.String("urls", "", "Comma-separated doc URLs for --transport yandex_multistream (2+ required, same list on both ends)")
 	flag.StringVar(&maxToken, "maxToken", "", "MAX call user id. If u use MAX transport")
@@ -88,6 +89,7 @@ func main() {
 		cfg := nodeagent.DefaultConfig(*controlURL, *nodeToken)
 		cfg.ExitMode = exitMode
 		cfg.PortRangeSize = *portRangeSize
+		cfg.CaptchaSolveMode = parseCaptchaSolveMode(*captchaSolveMode)
 		orch := nodeagent.NewOrchestrator(cfg)
 		orch.Run(ctx)
 		return
@@ -113,7 +115,7 @@ func main() {
 		yd := yandex.NewYandexDocsTransport(url, config)
 		yd.EnableSelfCompression()
 		if *exitNode {
-			yd.SetCaptchaSolveMode(yandex.CaptchaSolveModeHeadlessBrowser)
+			yd.SetCaptchaSolveMode(parseCaptchaSolveMode(*captchaSolveMode))
 		}
 		return yd
 	}
@@ -174,4 +176,13 @@ func main() {
 		socks5Server := socks5.NewSOCKS5Server(*socksAddr, tun)
 		log.Fatal(socks5Server.Start())
 	}
+}
+
+// parseCaptchaSolveMode defaults an unrecognized value to off rather than failing the whole
+// process over it - this only ever disables an optional bonus, not something worth a hard exit.
+func parseCaptchaSolveMode(s string) yandex.CaptchaSolveMode {
+	if s == "headless_browser" {
+		return yandex.CaptchaSolveModeHeadlessBrowser
+	}
+	return yandex.CaptchaSolveModeOff
 }

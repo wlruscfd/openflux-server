@@ -26,19 +26,22 @@ type Config struct {
 	ExitMode        tunnel.ExitMode
 	// PortRangeSize: raw mode's outbound ports per key - trades keys-per-node against connections-per-key; 0 = DefaultPortRangeSize.
 	PortRangeSize int
+	// CaptchaSolveMode: see yandex.CaptchaSolveMode. Applied to every yandex transport this orchestrator starts.
+	CaptchaSolveMode yandex.CaptchaSolveMode
 }
 
 const DefaultPortRangeSize = 96
 
 func DefaultConfig(controlURL, nodeToken string) Config {
 	return Config{
-		ControlURL:      controlURL,
-		NodeToken:       nodeToken,
-		PollInterval:    20 * time.Second,
-		UsageInterval:   20 * time.Second,
-		HeartbeatPeriod: 60 * time.Second,
-		ExitMode:        tunnel.ExitModeRaw,
-		PortRangeSize:   DefaultPortRangeSize,
+		ControlURL:       controlURL,
+		NodeToken:        nodeToken,
+		PollInterval:     20 * time.Second,
+		UsageInterval:    20 * time.Second,
+		HeartbeatPeriod:  60 * time.Second,
+		ExitMode:         tunnel.ExitModeRaw,
+		PortRangeSize:    DefaultPortRangeSize,
+		CaptchaSolveMode: yandex.CaptchaSolveModeHeadlessBrowser,
 	}
 }
 
@@ -330,7 +333,7 @@ func (o *Orchestrator) startRelayBridgeWorker(k RemoteKey) (*worker, error) {
 
 	yd := yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig())
 	yd.EnableSelfCompression()
-	yd.SetCaptchaSolveMode(yandex.CaptchaSolveModeHeadlessBrowser)
+	yd.SetCaptchaSolveMode(o.cfg.CaptchaSolveMode)
 	if err := yd.Start(); err != nil {
 		return nil, err
 	}
@@ -381,7 +384,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 
 	// For yandex_multistream, each stream must compress/encrypt itself before MultiStreamTransport sees the data, since Send() reads streamIndex off what it assumes is a raw header.
 	wrapStream := func(yd *yandex.YandexDocsTransport, idx int, perStreamKey bool) transport.Transport {
-		yd.SetCaptchaSolveMode(yandex.CaptchaSolveModeHeadlessBrowser)
+		yd.SetCaptchaSolveMode(o.cfg.CaptchaSolveMode)
 		if !k.E2EEncryption {
 			yd.EnableSelfCompression()
 			return yd

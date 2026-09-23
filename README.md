@@ -145,6 +145,7 @@ Then set up a SOCKS5 proxy in your browser at localhost:1080.
 | `--mode`         | `raw`   | Exit node only: `raw` (needs root, general UDP relay) or `proxy` (no root, TCP only) |
 | `--local-ip`     | ``      | Raw mode only: exit node egress IP, for a box with more than one |
 | `--port-range-size` | `96` | Managed raw mode only: outbound ports reserved per concurrent key - lower fits more keys on this node (`~65000/size`), higher tolerates one key opening more simultaneous connections at once (e.g. Telegram loading media) before new ones start failing |
+| `--captcha-solve-mode` | `headless_browser` | Exit node only (`yandex`/`yandex_multistream`): `headless_browser` tries a shared headless Chrome/Chromium automatically when Yandex serves a CAPTCHA (needs it on `PATH` - `deploy/install.sh` asks and installs it), or `off` to just wait out the normal cooldown-and-retry |
 | `--codec`        | `legacy` | Wire codec for `--transport volga`/`oneme`/`cupsonline`/`mailru`: `legacy` (per-packet LZ4, unchanged) or `batched` (coalesce bursts into one zstd-compressed message per transport send - see below). Both ends must agree. Ignored for `yandex`/`yandex_multistream` - see below. |
 
 Ported from upstream [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux):
