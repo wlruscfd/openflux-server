@@ -22,7 +22,7 @@ TCP packets are sent via Transport. Available transports (`--transport`):
 3. `cupsonline` - sends packets via cups.online's collaborative interview-room cursor sync
    (desktop client/exit-node only, ported from upstream);
 4. `mailru` - sends packets via Mail.ru Docs cursor messages, the same coauthoring-protocol
-   family as `yandex` (desktop client/exit-node only, ported from upstream);
+   family as `yandex` (ported from upstream);
 5. `boards` - sends packets via Yandex Boards whiteboard "notify-position" events - experimental,
    ported from upstream and unverified against a live board.
 
@@ -43,7 +43,7 @@ transport/
 ├── yandex/           # Yandex Docs backend (also Volga, yandex_multistream)
 ├── oneme/            # MAX Messenger backend (desktop only)
 ├── cupsonline/       # cups.online backend (desktop only, ported from upstream)
-└── mailru/           # Mail.ru Docs backend (desktop only, ported from upstream)
+└── mailru/           # Mail.ru Docs backend (ported from upstream)
 tunnel/
 ├── tunnel.go         # TCP tunnel core
 ├── endpoint.go       # Virtual NIC

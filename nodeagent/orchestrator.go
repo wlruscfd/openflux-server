@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"universal-bypass-tool/transport"
+	"universal-bypass-tool/transport/mailru"
 	"universal-bypass-tool/transport/yandex"
 	"universal-bypass-tool/tunnel"
 	"universal-bypass-tool/utils"
@@ -201,8 +202,8 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
-		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" {
-			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards transports today", id)
+		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" {
+			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru transports today", id)
 			continue
 		}
 		if k.Transport == "yandex_multistream" && len(k.DocURLs) < 2 {
@@ -407,6 +408,14 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			return nil, fmt.Errorf("key %s: boards transport doesn't support e2e_encryption yet", k.ID)
 		}
 		trans = yandex.NewBoardsTransport(k.DocURL, transport.DefaultConfig())
+	case "mailru":
+		if k.E2EEncryption {
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, fmt.Errorf("key %s: mailru transport doesn't support e2e_encryption yet", k.ID)
+		}
+		trans = mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig())
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
