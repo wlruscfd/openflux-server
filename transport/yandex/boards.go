@@ -113,7 +113,6 @@ func NewBoardsTransport(rawURL string, config transport.TransportConfig) *Boards
 	}
 }
 
-// Start returns immediately; the actual authorize+connect happens in connectLoop's own goroutine.
 func (t *BoardsTransport) Start() error {
 	if err := t.BaseTransport.Start(); err != nil {
 		return err
@@ -140,7 +139,6 @@ func (t *BoardsTransport) Stop() error {
 	return t.BaseTransport.Stop()
 }
 
-// ForceReconnect drops the live session, or cuts short a backoff/captcha-cooldown wait if there's none yet.
 func (t *BoardsTransport) ForceReconnect() {
 	if s := t.session.Load(); s != nil && s.Conn != nil {
 		s.Conn.Close()
@@ -155,7 +153,6 @@ func (t *BoardsTransport) ForceReconnect() {
 	}
 }
 
-// ProvideCookies feeds solved-CAPTCHA cookies into the next authorize attempt and forces a reconnect.
 func (t *BoardsTransport) ProvideCookies(cookieStr string) {
 	t.cookiesMu.Lock()
 	t.providedCookies = cookieStr
@@ -199,7 +196,6 @@ func (t *BoardsTransport) IsConnected() bool {
 	return t.BaseTransport.IsConnected()
 }
 
-// errCaptchaRequired - sentinel: getAllowCaptcha hit a showcaptchafast redirect.
 var errCaptchaRequired = fmt.Errorf("captcha required")
 
 func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) error {
@@ -225,7 +221,6 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 	return nil
 }
 
-// errBoardsCaptchaBlocked marks an authorize() failure where the PoW solve itself failed.
 var errBoardsCaptchaBlocked = fmt.Errorf("boards: captcha solve failed")
 
 // authorize: GET /whiteboard/?hash=<hash> (may redirect to showcaptchafast) -> POST request-guest-token -> POST get-whiteboard-info.
@@ -727,7 +722,6 @@ func (t *BoardsTransport) sendSubscribe(sess *boardsSession, participant string)
 	})
 }
 
-// writerLoop sends queued tunnel packets as "notify-position" dashboard events, base64 in position.x.
 func (t *BoardsTransport) writerLoop(sess *boardsSession) {
 	queue := sess.Queue
 	for {
