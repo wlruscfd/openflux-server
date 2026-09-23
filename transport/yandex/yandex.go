@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/http/cookiejar"
 	neturl "net/url"
 	"regexp"
 	"strconv"
@@ -178,6 +179,11 @@ func (t *YandexDocsTransport) getProvidedCookies() string {
 	t.Mu.RLock()
 	defer t.Mu.RUnlock()
 	return t.providedCookies
+}
+
+func parseCookieHeader(header string) []*http.Cookie {
+	req := &http.Request{Header: http.Header{"Cookie": {header}}}
+	return req.Cookies()
 }
 
 // EnableSelfCompression makes writerLoop zstd-compress a whole batch of raw packets once the peer's keepalive proves it understands zstdBatchMarker, beating per-packet LZ4's missed cross-packet redundancy; not for use alongside external CompressedTransport wrapping.
@@ -928,20 +934,63 @@ func (t *YandexDocsTransport) backoffDelay(attempt int) time.Duration {
 }
 
 func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, error) {
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil },
-		Timeout:       30 * time.Second,
-		Transport:     &http.Transport{DialContext: transport.ProtectedDialer().DialContext},
+	jar, _ := cookiejar.New(nil)
+	if parsed, err := neturl.Parse(url); err == nil {
+		if provided := t.getProvidedCookies(); provided != "" {
+			jar.SetCookies(parsed, parseCookieHeader(provided))
+		}
 	}
 
-	req, _ := http.NewRequest("GET", url, nil)
-	applyBrowserGetHeaders(req.Header)
-	if provided := t.getProvidedCookies(); provided != "" {
-		req.Header.Set("Cookie", provided)
+	client := &http.Client{
+		Jar:       jar,
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{DialContext: transport.ProtectedDialer().DialContext},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return YandexDocsInfo{}, err
+
+	currentURL := url
+	var resp *http.Response
+	for hop := 0; hop < 10; hop++ {
+		req, _ := http.NewRequest("GET", currentURL, nil)
+		applyBrowserGetHeaders(req.Header)
+		var err error
+		resp, err = client.Do(req)
+		if err != nil {
+			return YandexDocsInfo{}, err
+		}
+
+		if resp.StatusCode == 200 {
+			break
+		}
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return YandexDocsInfo{}, fmt.Errorf("unexpected status %d at %s", resp.StatusCode, currentURL)
+		}
+
+		loc := resp.Header.Get("Location")
+		resp.Body.Close()
+		if loc == "" {
+			return YandexDocsInfo{}, fmt.Errorf("redirect without Location from %s", currentURL)
+		}
+
+		if strings.Contains(loc, "showcaptchafast") {
+			t.debugf("captcha redirect detected, solving via PoW")
+			t.EmitEvent(transport.EventCaptchaRequired, url)
+			if _, cerr := solveCaptcha(currentURL, jar, browserUserAgent, client.Transport); cerr != nil {
+				t.debugf("PoW captcha solve failed: %v", cerr)
+				return YandexDocsInfo{}, errCaptchaBlocked
+			}
+			t.debugf("PoW captcha solved, retrying")
+			currentURL = url
+			continue
+		}
+		currentURL = loc
+	}
+
+	if resp == nil || resp.StatusCode != 200 {
+		return YandexDocsInfo{}, fmt.Errorf("no successful response after redirects")
 	}
 	defer resp.Body.Close()
 
@@ -952,6 +1001,9 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 
 	var cookies []string
 	for _, c := range resp.Cookies() {
+		cookies = append(cookies, fmt.Sprintf("%s=%s", c.Name, c.Value))
+	}
+	for _, c := range jar.Cookies(resp.Request.URL) {
 		cookies = append(cookies, fmt.Sprintf("%s=%s", c.Name, c.Value))
 	}
 
@@ -973,6 +1025,12 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			return YandexDocsInfo{}, errCaptchaBlocked
 		}
 		return YandexDocsInfo{}, fmt.Errorf("config not found")
+	}
+
+	if joined := strings.Join(cookies, "; "); joined != "" {
+		t.Mu.Lock()
+		t.providedCookies = joined
+		t.Mu.Unlock()
 	}
 
 	var config map[string]interface{}

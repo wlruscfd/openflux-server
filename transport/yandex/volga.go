@@ -186,6 +186,17 @@ func authorize(docURL string) (*volgaAuth, error) {
 			if loc == "" {
 				return nil, fmt.Errorf("redirect without Location from %s", currentURL)
 			}
+
+			if strings.Contains(loc, "showcaptchafast") {
+				utils.Debugf("[VOLGA] captcha required, solving...")
+				if _, cerr := solveCaptcha(currentURL, jar, volgaUserAgent, session.Transport); cerr != nil {
+					return nil, fmt.Errorf("captcha solve: %w", cerr)
+				}
+				utils.Debugf("[VOLGA] captcha solved, retrying from %s", docURL)
+				currentURL = docURL
+				continue
+			}
+
 			if strings.HasPrefix(loc, "/") {
 				u, _ := url.Parse(currentURL)
 				loc = u.Scheme + "://" + u.Host + loc
