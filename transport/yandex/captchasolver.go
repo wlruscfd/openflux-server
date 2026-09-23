@@ -3,6 +3,8 @@ package yandex
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -43,13 +45,17 @@ func (s *captchaSolver) solve(docURL string) (string, error) {
 
 	tabCtx, cancelTab := chromedp.NewContext(browserCtx)
 	defer cancelTab()
-	tabCtx, cancelTimeout := context.WithTimeout(tabCtx, headlessCaptchaSolveTimeout)
-	defer cancelTimeout()
 
-	if err := chromedp.Run(tabCtx,
+	waitCtx, cancelWait := context.WithTimeout(tabCtx, headlessCaptchaSolveTimeout)
+	err := chromedp.Run(waitCtx,
 		chromedp.Navigate(docURL),
 		chromedp.WaitReady("#client-config", chromedp.ByID),
-	); err != nil {
+	)
+	cancelWait()
+	if err != nil {
+		if shot := saveFailureScreenshot(tabCtx); shot != "" {
+			return "", fmt.Errorf("headless solve did not clear the check (screenshot: %s): %w", shot, err)
+		}
 		return "", fmt.Errorf("headless solve did not clear the check: %w", err)
 	}
 
@@ -66,6 +72,20 @@ func (s *captchaSolver) solve(docURL string) (string, error) {
 	s.mu.Unlock()
 
 	return cookieStr, nil
+}
+
+func saveFailureScreenshot(ctx context.Context) string {
+	shotCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var buf []byte
+	if err := chromedp.Run(shotCtx, chromedp.CaptureScreenshot(&buf)); err != nil || len(buf) == 0 {
+		return ""
+	}
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("openflux-captcha-%d.png", time.Now().UnixNano()))
+	if os.WriteFile(path, buf, 0o644) != nil {
+		return ""
+	}
+	return path
 }
 
 func extractCookies(ctx context.Context, docURL string) (string, error) {
