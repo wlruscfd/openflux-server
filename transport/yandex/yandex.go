@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -58,7 +59,17 @@ const (
 	reasonHandshakeFailed = "handshake_failed"
 	reasonSendFailed      = "send_failed"
 	reasonReadError       = "read_error"
+	reasonCaptchaBlocked  = "captcha_blocked"
 )
+
+// errCaptchaBlocked marks fetchDocInfo failures where Yandex served a CAPTCHA/bot-check page
+// instead of the doc editor - retrying on the normal fast backoff only reinforces a block like
+// this, so connectToDoc gives it a much longer, fixed cooldown instead (see captchaCooldown).
+var errCaptchaBlocked = errors.New("captcha or bot-check page returned instead of the doc editor")
+
+// captchaCooldown is a floor, not the usual attempt-scaled backoff: a CAPTCHA means this
+// client/IP is already flagged, so hammering it faster just extends the block.
+const captchaCooldown = 3 * time.Minute
 
 type YandexDocsInfo struct {
 	CookieStr   string
@@ -244,7 +255,11 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		info, err := t.fetchDocInfo(t.url, userID)
 		if err != nil {
 			t.debugf("fetchDocInfo failed: %v", err)
-			t.scheduleReconnect(attempt, reasonFetchFailed, err)
+			if errors.Is(err, errCaptchaBlocked) {
+				t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, captchaCooldown)
+			} else {
+				t.scheduleReconnect(attempt, reasonFetchFailed, err)
+			}
 			return
 		}
 
@@ -790,6 +805,13 @@ func (t *YandexDocsTransport) extractBase64String(response string) string {
 }
 
 func (t *YandexDocsTransport) scheduleReconnect(attempt int, reasonCode string, cause error) {
+	t.scheduleReconnectWithMinDelay(attempt, reasonCode, cause, 0)
+}
+
+// scheduleReconnectWithMinDelay is scheduleReconnect with a floor under the usual attempt-scaled
+// backoff, for failures (like a CAPTCHA) where the normal fast retry schedule is actively
+// counterproductive rather than just slow.
+func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonCode string, cause error, minDelay time.Duration) {
 	if !t.IsRunning() || attempt >= t.GetConfig().MaxReconnectAttempts {
 		return
 	}
@@ -797,6 +819,9 @@ func (t *YandexDocsTransport) scheduleReconnect(attempt int, reasonCode string, 
 	t.RecordReconnect()
 
 	delay := t.backoffDelay(attempt)
+	if delay < minDelay {
+		delay = minDelay
+	}
 	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
 	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", attempt+1, int(delay.Seconds()), reasonCode, causeText))
 	if delay > 0 {
@@ -892,7 +917,8 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	matches := re.FindStringSubmatch(html)
 	if len(matches) < 2 {
 		lower := strings.ToLower(html)
-		if strings.Contains(lower, "captcha") {
+		isCaptcha := strings.Contains(lower, "captcha")
+		if isCaptcha {
 			t.debugf("response looks like a CAPTCHA/bot-check page, not the doc editor")
 		}
 		preview := html
@@ -900,6 +926,9 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			preview = preview[:2000]
 		}
 		t.debugf("HTML preview: %s", preview)
+		if isCaptcha {
+			return YandexDocsInfo{}, errCaptchaBlocked
+		}
 		return YandexDocsInfo{}, fmt.Errorf("config not found")
 	}
 
