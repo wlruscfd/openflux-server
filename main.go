@@ -58,6 +58,7 @@ func main() {
 
 	if *debug {
 		utils.EnableDebug()
+		utils.SetVerbose(true)
 	}
 
 	exitMode, modeErr := tunnel.ParseExitMode(*mode)
