@@ -113,7 +113,7 @@ func main() {
 		yd := yandex.NewYandexDocsTransport(url, config)
 		yd.EnableSelfCompression()
 		if *exitNode {
-			yd.EnableHeadlessCaptchaSolving()
+			yd.SetCaptchaSolveMode(yandex.CaptchaSolveModeHeadlessBrowser)
 		}
 		return yd
 	}

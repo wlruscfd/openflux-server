@@ -142,19 +142,32 @@ type YandexDocsTransport struct {
 	// a session that looks continuously "returning" is also less likely to be re-flagged.
 	providedCookies string
 
-	// headlessCaptcha is set only by EnableHeadlessCaptchaSolving - exit-node use only, see its
-	// doc comment.
-	headlessCaptcha bool
+	// captchaSolveMode is set only by SetCaptchaSolveMode - exit-node use only, see its doc comment.
+	captchaSolveMode CaptchaSolveMode
 }
 
-// EnableHeadlessCaptchaSolving turns a CAPTCHA failure into an automatic, unattended solve attempt
-// via a shared headless Chrome/Chromium (see captchasolver.go), for exit-node use only: unlike the
-// client app, there's no user around to solve one by hand in a WebView. Best-effort - if
-// Chrome/Chromium isn't installed, or the page needs an interactive puzzle a headless browser
-// can't click through, this just fails quietly and the existing captchaCooldown retry takes over
-// exactly as it did before this existed.
-func (t *YandexDocsTransport) EnableHeadlessCaptchaSolving() {
-	t.headlessCaptcha = true
+// CaptchaSolveMode selects how (if at all) an exit node reacts to a CAPTCHA failure with no user
+// present to solve one by hand the way the client app's WebView does. A type instead of a plain
+// bool so a future mode (an admin-panel hand-off, a paid solving service, ...) is a new constant
+// and a new case in connectToDoc's switch, not a signature change at every call site.
+type CaptchaSolveMode string
+
+const (
+	// CaptchaSolveModeOff never reacts to a CAPTCHA beyond the existing captchaCooldown retry.
+	CaptchaSolveModeOff CaptchaSolveMode = ""
+	// CaptchaSolveModeHeadlessBrowser tries a shared headless Chrome/Chromium (captchasolver.go)
+	// in the background - many CAPTCHAs are a JS/behavioral check a real browser clears on its
+	// own in seconds. Best-effort: a missing/broken browser or a genuine interactive puzzle just
+	// falls back to captchaCooldown exactly as CaptchaSolveModeOff always has.
+	CaptchaSolveModeHeadlessBrowser CaptchaSolveMode = "headless_browser"
+)
+
+// SetCaptchaSolveMode picks how this transport reacts to a CAPTCHA failure - exit-node use only
+// (main.go and nodeagent are the only callers; the client app instead surfaces
+// transport.EventCaptchaRequired to its own WebView UI, which needs no mode since a human is
+// actually there to solve it).
+func (t *YandexDocsTransport) SetCaptchaSolveMode(mode CaptchaSolveMode) {
+	t.captchaSolveMode = mode
 }
 
 // tryHeadlessSolve runs in its own goroutine alongside the normal captchaCooldown wait - whichever
@@ -307,8 +320,11 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		if err != nil {
 			t.debugf("fetchDocInfo failed: %v", err)
 			if errors.Is(err, errCaptchaBlocked) {
-				if t.headlessCaptcha {
+				switch t.captchaSolveMode {
+				case CaptchaSolveModeHeadlessBrowser:
 					go t.tryHeadlessSolve(t.url)
+				case CaptchaSolveModeOff:
+					// No automatic attempt - captchaCooldown below is the whole story.
 				}
 				t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, captchaCooldown)
 			} else {

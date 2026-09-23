@@ -24,8 +24,8 @@ const headlessCaptchaSolveTimeout = 20 * time.Second
 const headlessBrowserIdleTimeout = 3 * time.Minute
 
 // headlessSolver is one shared instance for the whole process, not one per key/transport - see
-// EnableHeadlessCaptchaSolving's doc comment for why a single browser (and a single in-flight
-// solve at a time, via solveMu) is the point on a small VPS running many keys.
+// SetCaptchaSolveMode's doc comment for why a single browser (and a single in-flight solve at a
+// time, via solveMu) is the point on a small VPS running many keys.
 var headlessSolver = &captchaSolver{}
 
 type captchaSolver struct {
