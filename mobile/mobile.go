@@ -181,16 +181,10 @@ func NetworkChanged() {
 	}
 }
 
-// cookieProvider is implemented by transports (currently only YandexDocsTransport) that can take
-// cookies harvested from a client-side WebView after the user solves a CAPTCHA the headless fetch
-// hit on its own - see transport.EventCaptchaRequired.
 type cookieProvider interface {
 	ProvideCookies(cookieStr string)
 }
 
-// ProvideCaptchaCookies feeds solved-CAPTCHA cookies back into whichever transport is currently
-// running (VPN tunnel or SOCKS5 proxy) and asks it to retry immediately instead of waiting out
-// its cooldown.
 func ProvideCaptchaCookies(cookieStr string) error {
 	mu.Lock()
 	s := current

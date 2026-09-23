@@ -62,13 +62,10 @@ const (
 	reasonCaptchaBlocked  = "captcha_blocked"
 )
 
-// errCaptchaBlocked marks fetchDocInfo failures where Yandex served a CAPTCHA/bot-check page
-// instead of the doc editor - retrying on the normal fast backoff only reinforces a block like
-// this, so connectToDoc gives it a much longer, fixed cooldown instead (see captchaCooldown).
+// errCaptchaBlocked marks a CAPTCHA/bot-check page returned instead of the doc editor.
 var errCaptchaBlocked = errors.New("captcha or bot-check page returned instead of the doc editor")
 
-// captchaCooldown is a floor, not the usual attempt-scaled backoff: a CAPTCHA means this
-// client/IP is already flagged, so hammering it faster just extends the block.
+// captchaCooldown is a floor under the usual attempt-scaled backoff for captcha failures.
 const captchaCooldown = 3 * time.Minute
 
 type YandexDocsInfo struct {
@@ -136,43 +133,24 @@ type YandexDocsTransport struct {
 	// tag identifies this instance's log lines on a node running many keys at once - a bare "[YDOCS]" line can't otherwise be traced back to which key it belongs to.
 	tag string
 
-	// providedCookies comes from a real browser session (a client-side WebView the user solved a
-	// CAPTCHA in) via ProvideCookies, since fetchDocInfo itself is headless and can't solve one.
-	// Kept for the transport's lifetime and resent on every future fetch, not just the next one -
-	// a session that looks continuously "returning" is also less likely to be re-flagged.
+	// providedCookies is set via ProvideCookies and resent on every future fetch.
 	providedCookies string
 
-	// captchaSolveMode is set only by SetCaptchaSolveMode - exit-node use only, see its doc comment.
 	captchaSolveMode CaptchaSolveMode
 }
 
-// CaptchaSolveMode selects how (if at all) an exit node reacts to a CAPTCHA failure with no user
-// present to solve one by hand the way the client app's WebView does. A type instead of a plain
-// bool so a future mode (an admin-panel hand-off, a paid solving service, ...) is a new constant
-// and a new case in connectToDoc's switch, not a signature change at every call site.
+// CaptchaSolveMode selects how an exit node reacts to a CAPTCHA failure - exit-node use only.
 type CaptchaSolveMode string
 
 const (
-	// CaptchaSolveModeOff never reacts to a CAPTCHA beyond the existing captchaCooldown retry.
-	CaptchaSolveModeOff CaptchaSolveMode = ""
-	// CaptchaSolveModeHeadlessBrowser tries a shared headless Chrome/Chromium (captchasolver.go)
-	// in the background - many CAPTCHAs are a JS/behavioral check a real browser clears on its
-	// own in seconds. Best-effort: a missing/broken browser or a genuine interactive puzzle just
-	// falls back to captchaCooldown exactly as CaptchaSolveModeOff always has.
+	CaptchaSolveModeOff             CaptchaSolveMode = ""
 	CaptchaSolveModeHeadlessBrowser CaptchaSolveMode = "headless_browser"
 )
 
-// SetCaptchaSolveMode picks how this transport reacts to a CAPTCHA failure - exit-node use only
-// (main.go and nodeagent are the only callers; the client app instead surfaces
-// transport.EventCaptchaRequired to its own WebView UI, which needs no mode since a human is
-// actually there to solve it).
 func (t *YandexDocsTransport) SetCaptchaSolveMode(mode CaptchaSolveMode) {
 	t.captchaSolveMode = mode
 }
 
-// tryHeadlessSolve runs in its own goroutine alongside the normal captchaCooldown wait - whichever
-// resolves first wins, since ProvideCookies (via ForceReconnect) cancels that wait the moment it
-// succeeds.
 func (t *YandexDocsTransport) tryHeadlessSolve(docURL string) {
 	cookies, err := SolveCaptcha(docURL)
 	if err != nil {
@@ -187,10 +165,7 @@ func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
 	utils.Debugf("[YDOCS/%s] "+format, append([]interface{}{t.tag}, args...)...)
 }
 
-// ProvideCookies feeds a real browser session's cookies (harvested by the client app after the
-// user solves a CAPTCHA in a WebView pointed at the same doc_url) into subsequent doc fetches,
-// and cancels the remaining captchaCooldown wait to retry immediately rather than sit it out now
-// that the block is actually cleared.
+// ProvideCookies feeds a solved session's cookies into subsequent fetches and forces a reconnect.
 func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.Mu.Lock()
 	t.providedCookies = cookieStr
@@ -320,11 +295,8 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		if err != nil {
 			t.debugf("fetchDocInfo failed: %v", err)
 			if errors.Is(err, errCaptchaBlocked) {
-				switch t.captchaSolveMode {
-				case CaptchaSolveModeHeadlessBrowser:
+				if t.captchaSolveMode == CaptchaSolveModeHeadlessBrowser {
 					go t.tryHeadlessSolve(t.url)
-				case CaptchaSolveModeOff:
-					// No automatic attempt - captchaCooldown below is the whole story.
 				}
 				t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, captchaCooldown)
 			} else {
@@ -878,9 +850,6 @@ func (t *YandexDocsTransport) scheduleReconnect(attempt int, reasonCode string, 
 	t.scheduleReconnectWithMinDelay(attempt, reasonCode, cause, 0)
 }
 
-// scheduleReconnectWithMinDelay is scheduleReconnect with a floor under the usual attempt-scaled
-// backoff, for failures (like a CAPTCHA) where the normal fast retry schedule is actively
-// counterproductive rather than just slow.
 func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonCode string, cause error, minDelay time.Duration) {
 	if !t.IsRunning() || attempt >= t.GetConfig().MaxReconnectAttempts {
 		return

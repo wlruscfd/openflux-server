@@ -26,7 +26,6 @@ type Config struct {
 	ExitMode        tunnel.ExitMode
 	// PortRangeSize: raw mode's outbound ports per key - trades keys-per-node against connections-per-key; 0 = DefaultPortRangeSize.
 	PortRangeSize int
-	// CaptchaSolveMode: see yandex.CaptchaSolveMode. Applied to every yandex transport this orchestrator starts.
 	CaptchaSolveMode yandex.CaptchaSolveMode
 }
 

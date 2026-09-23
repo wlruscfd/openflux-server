@@ -178,8 +178,6 @@ func main() {
 	}
 }
 
-// parseCaptchaSolveMode defaults an unrecognized value to off rather than failing the whole
-// process over it - this only ever disables an optional bonus, not something worth a hard exit.
 func parseCaptchaSolveMode(s string) yandex.CaptchaSolveMode {
 	if s == "headless_browser" {
 		return yandex.CaptchaSolveModeHeadlessBrowser
