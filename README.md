@@ -22,7 +22,9 @@ TCP packets are sent via Transport. Available transports (`--transport`):
 3. `cupsonline` - sends packets via cups.online's collaborative interview-room cursor sync
    (desktop client/exit-node only, ported from upstream);
 4. `mailru` - sends packets via Mail.ru Docs cursor messages, the same coauthoring-protocol
-   family as `yandex` (desktop client/exit-node only, ported from upstream).
+   family as `yandex` (desktop client/exit-node only, ported from upstream);
+5. `boards` - sends packets via Yandex Boards whiteboard "notify-position" events - experimental,
+   ported from upstream and unverified against a live board.
 
 Client side runs a SOCKS5 proxy, exit node decapsulates and forwards packets to destination point.
 

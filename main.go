@@ -36,7 +36,7 @@ func main() {
 	client := flag.Bool("client", false, "Run as client")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	socksAddr := flag.String("socks5", ":1080", "SOCKS5 address")
-	transportType := flag.String("transport", "yandex", "Transport type (yandex, volga, oneme, yandex_multistream, cupsonline, mailru)")
+	transportType := flag.String("transport", "yandex", "Transport type (yandex, volga, oneme, yandex_multistream, cupsonline, mailru, boards)")
 	managed := flag.Bool("managed", false, "Exit node only: fetch active keys from a controlplane instance instead of a single --url")
 	controlURL := flag.String("control-url", "", "Managed mode: base URL of the openflux-control service")
 	nodeToken := flag.String("node-token", "", "Managed mode: this node's bearer token from controlplane")
@@ -120,6 +120,8 @@ func main() {
 	}
 
 	switch *transportType {
+	case "boards":
+		trans = yandex.NewBoardsTransport(globalDocUrl, config)
 	case "yandex":
 		trans = selfCompressingYandex(globalDocUrl)
 	case "volga":
