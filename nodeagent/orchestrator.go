@@ -41,7 +41,7 @@ func DefaultConfig(controlURL, nodeToken string) Config {
 		HeartbeatPeriod:  60 * time.Second,
 		ExitMode:         tunnel.ExitModeRaw,
 		PortRangeSize:    DefaultPortRangeSize,
-		CaptchaSolveMode: yandex.CaptchaSolveModeHeadlessBrowser,
+		CaptchaSolveMode: yandex.CaptchaSolveModeOff,
 	}
 }
 

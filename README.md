@@ -77,13 +77,16 @@ export XCODE_PATH="<your Xcode.app path>" # optional, defaults to /Applications/
 
 ### Setting up an exit node
 
-If Yandex serves a CAPTCHA instead of the doc (`yandex`/`yandex_multistream` transport only), the
-exit node tries to clear it unattended with a shared, lazily-started headless Chrome/Chromium
-(`transport/yandex/captchasolver.go`) - many CAPTCHAs turn out to be a JS/behavioral check a real
-browser passes on its own within seconds. This is best-effort: it needs `chromium` (or
-`google-chrome`) on `PATH` (`deploy/install.sh` installs it, non-fatally, when you opt to run a
-node), and a genuine interactive puzzle just times out and falls back to the normal
-cooldown-and-retry - there's no way around that one without a human or a paid solving service.
+`browser_ua.go`'s bare `Mozilla/5.0` User-Agent (deliberately vague rather than a specific,
+convincing browser fingerprint - see its comment) already avoids triggering most Yandex CAPTCHAs on
+exit-node IPs. For whatever still gets through, `--captcha-solve-mode headless_browser` (off by
+default - see Flags below) makes the exit node try to clear it unattended with a shared,
+lazily-started headless Chrome/Chromium (`transport/yandex/captchasolver.go`) - many CAPTCHAs turn
+out to be a JS/behavioral check a real browser passes on its own within seconds. This is
+best-effort: it needs `chromium` (or `google-chrome`) on `PATH` (`deploy/install.sh` asks and
+installs it when you opt in), and a genuine interactive puzzle just times out and falls back to the
+normal cooldown-and-retry - there's no way around that one without a human or a paid solving
+service.
 
 The exit node reaches the real internet in one of two modes (`--mode`):
 
@@ -145,7 +148,7 @@ Then set up a SOCKS5 proxy in your browser at localhost:1080.
 | `--mode`         | `raw`   | Exit node only: `raw` (needs root, general UDP relay) or `proxy` (no root, TCP only) |
 | `--local-ip`     | ``      | Raw mode only: exit node egress IP, for a box with more than one |
 | `--port-range-size` | `96` | Managed raw mode only: outbound ports reserved per concurrent key - lower fits more keys on this node (`~65000/size`), higher tolerates one key opening more simultaneous connections at once (e.g. Telegram loading media) before new ones start failing |
-| `--captcha-solve-mode` | `headless_browser` | Exit node only (`yandex`/`yandex_multistream`): `headless_browser` tries a shared headless Chrome/Chromium automatically when Yandex serves a CAPTCHA (needs it on `PATH` - `deploy/install.sh` asks and installs it), or `off` to just wait out the normal cooldown-and-retry |
+| `--captcha-solve-mode` | `off` | Exit node only (`yandex`/`yandex_multistream`): `off` just waits out the normal cooldown-and-retry - `browser_ua.go`'s User-Agent choice already avoids triggering most CAPTCHAs - or `headless_browser` to also try a shared headless Chrome/Chromium automatically (needs it on `PATH` - `deploy/install.sh` asks and installs it) |
 | `--codec`        | `legacy` | Wire codec for `--transport volga`/`oneme`/`cupsonline`/`mailru`: `legacy` (per-packet LZ4, unchanged) or `batched` (coalesce bursts into one zstd-compressed message per transport send - see below). Both ends must agree. Ignored for `yandex`/`yandex_multistream` - see below. |
 
 Ported from upstream [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux):
