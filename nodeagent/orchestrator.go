@@ -407,7 +407,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			}
 			return nil, fmt.Errorf("key %s: boards transport doesn't support e2e_encryption yet", k.ID)
 		}
-		trans = yandex.NewBoardsTransport(k.DocURL, transport.DefaultConfig())
+		trans = transport.NewCompressedTransport(yandex.NewBoardsTransport(k.DocURL, transport.DefaultConfig()))
 	case "mailru":
 		if k.E2EEncryption {
 			if portIdx >= 0 {
@@ -415,7 +415,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			}
 			return nil, fmt.Errorf("key %s: mailru transport doesn't support e2e_encryption yet", k.ID)
 		}
-		trans = mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig())
+		trans = transport.NewCompressedTransport(mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig()))
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
