@@ -3,32 +3,39 @@ package yandex
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"universal-bypass-tool/utils"
 )
 
-// solveCaptcha проходит Яндекс-капчу (blink-check, proof-of-work + fingerprint) для заданного URL - без браузера.
-//
-// Возвращает retpath (пустая строка = капча не требовалась).
-// Cookies в jar обновляются на месте.
 func solveCaptcha(docURL string, jar http.CookieJar, userAgent string, rt http.RoundTripper) (string, error) {
+	return solveCaptchaDepth(docURL, jar, userAgent, rt, 3)
+}
+
+func solveCaptchaDepth(docURL string, jar http.CookieJar, userAgent string, rt http.RoundTripper, remaining int) (string, error) {
 	if jar == nil {
 		return "", fmt.Errorf("captcha: nil cookiejar")
 	}
 	if userAgent == "" {
 		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	client := &http.Client{
 		Jar:       jar,
@@ -45,19 +52,23 @@ func solveCaptcha(docURL string, jar http.CookieJar, userAgent string, rt http.R
 	currentURL := docURL
 	for i := 0; i < 10; i++ {
 		utils.Debugf("[CAPTCHA] GET %s", shortStr(currentURL, 120))
-		req, _ := http.NewRequest("GET", currentURL, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		setBrowserHeaders(req, userAgent)
 		resp, err := client.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("captcha GET: %w", err)
 		}
-		io.Copy(io.Discard, resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		utils.Debugf("[CAPTCHA]   status=%d location=%s",
 			resp.StatusCode, shortStr(resp.Header.Get("Location"), 100))
 
-		if resp.StatusCode == 200 {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if looksLikeCaptchaHTML(body) {
+				captchaURL = resp.Request.URL.String()
+				break
+			}
 			utils.Debugf("[CAPTCHA] 200 OK — капча не требуется")
 			return "", nil
 		}
@@ -66,177 +77,362 @@ func solveCaptcha(docURL string, jar http.CookieJar, userAgent string, rt http.R
 			return "", fmt.Errorf("captcha unexpected status %d", resp.StatusCode)
 		}
 
-		loc := resp.Header.Get("Location")
-		if loc == "" {
-			return "", fmt.Errorf("captcha: redirect without Location")
+		loc, err := resp.Location()
+		if err != nil {
+			return "", fmt.Errorf("captcha redirect: %w", err)
 		}
-
-		if strings.Contains(loc, "showcaptchafast") {
-			captchaURL = loc
+		if isCaptchaURL(loc.String()) {
+			captchaURL = loc.String()
 			break
 		}
-		currentURL = loc
+		currentURL = loc.String()
 	}
 
 	if captchaURL == "" {
-		return "", fmt.Errorf("captcha: showcaptchafast not found in redirect chain")
+		return "", fmt.Errorf("captcha: challenge URL not found in redirect chain")
 	}
 
-	utils.Debugf("[CAPTCHA] GET showcaptchafast")
-	req, _ := http.NewRequest("GET", captchaURL, nil)
+	utils.Debugf("[CAPTCHA] GET %s", shortStr(captchaURL, 120))
+	req, _ := http.NewRequestWithContext(ctx, "GET", captchaURL, nil)
 	setBrowserHeaders(req, userAgent)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("captcha showcaptcha GET: %w", err)
+		return "", fmt.Errorf("captcha challenge GET: %w", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("captcha showcaptcha status %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("captcha challenge status %d", resp.StatusCode)
 	}
-	utils.Debugf("[CAPTCHA] showcaptcha: %d bytes", len(body))
+	utils.Debugf("[CAPTCHA] challenge: %d bytes", len(body))
 
-	ssr, formAction, err := parseCaptchaHTML(string(body))
+	ssr, formAction, err := parseCaptchaHTML(string(body), resp.Request.URL.String())
 	if err != nil {
 		return "", err
 	}
 	utils.Debugf("[CAPTCHA] uniqueKey=%s timestamp=%d complexity=%d prefix=%s",
-		ssr.UniqueKey, ssr.Timestamp, ssr.Pow.Complexity, shortStr(ssr.Pow.Prefix, 32))
+		ssr.UniqueKey, ssr.Timestamp, ssr.PowComplexity, shortStr(ssr.PowPrefix, 32))
 
-	t0 := time.Now()
-	nonceHex, attempts := solveCaptchaPoW(ssr.Pow.Prefix, ssr.Pow.Complexity)
+	started := time.Now()
+	nonceHex, attempts, elapsed, err := solveCaptchaPoW(ctx, ssr.PowPrefix, ssr.PowComplexity)
+	if err != nil {
+		return "", fmt.Errorf("captcha PoW after %d attempts: %w", attempts, err)
+	}
+	if nonceHex == "" {
+		return "", fmt.Errorf("captcha PoW exhausted after %d attempts", attempts)
+	}
+	calcTime := elapsed.Milliseconds()
 	utils.Debugf("[CAPTCHA] PoW solved: nonce=%s attempts=%d time=%v",
-		nonceHex, attempts, time.Since(t0))
-
-	fp := buildCaptchaFingerprint(nonceHex, userAgent)
-	fpEncoded := encodeCaptchaFingerprint(fp)
-	utils.Debugf("[CAPTCHA] fingerprint: json=%d encoded=%d bytes",
-		len(mustMarshal(fp)), len(fpEncoded))
+		nonceHex, attempts, time.Since(started))
 
 	form := url.Values{}
-	form.Set("version", "1.5.0")
-	form.Set("uniquekey", ssr.UniqueKey)
-	form.Set("chstate", "ok")
-	form.Set("fingerprint", fpEncoded)
+	if ssr.Legacy {
+		form.Set("version", "1.5.0")
+		form.Set("uniquekey", ssr.UniqueKey)
+		form.Set("chstate", "ok")
+		form.Set("fingerprint", encodeCaptchaFingerprint(buildLegacyCaptchaFingerprint(nonceHex, ssr.UniqueKey, elapsed)))
+	} else {
+		form.Set("rdata", encodeCaptchaJSON(buildCaptchaFingerprint(nonceHex, userAgent)))
+		form.Set("pdata", encodeCaptchaPoWData(ssr.PowPrefix, nonceHex, calcTime))
+		form.Set("tdata", "")
+		form.Set("picasso", "")
+	}
 
 	utils.Debugf("[CAPTCHA] POST %s", shortStr(formAction, 100))
-	req2, _ := http.NewRequest("POST", formAction, strings.NewReader(form.Encode()))
+	req2, _ := http.NewRequestWithContext(ctx, "POST", formAction, strings.NewReader(form.Encode()))
 	setBrowserHeaders(req2, userAgent)
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req2.Header.Set("Origin", "https://docs.yandex.ru")
+	req2.Header.Set("Origin", originOf(resp.Request.URL))
 	req2.Header.Set("Referer", captchaURL)
 
 	resp2, err := client.Do(req2)
 	if err != nil {
 		return "", fmt.Errorf("captcha POST: %w", err)
 	}
-	io.Copy(io.Discard, resp2.Body)
+	responseBody, _ := io.ReadAll(resp2.Body)
 	resp2.Body.Close()
 
 	utils.Debugf("[CAPTCHA] POST result: status=%d location=%s",
 		resp2.StatusCode, shortStr(resp2.Header.Get("Location"), 120))
 
-	if resp2.StatusCode < 300 || resp2.StatusCode >= 400 {
-		return "", fmt.Errorf("captcha POST unexpected status %d", resp2.StatusCode)
+	if resp2.StatusCode < 200 || resp2.StatusCode >= 400 {
+		return "", fmt.Errorf("captcha POST unexpected status %d: %s", resp2.StatusCode, shortStr(string(responseBody), 200))
 	}
 
-	retpath := resp2.Header.Get("Location")
-	if retpath == "" {
-		retpath = docURL
+	retpath := docURL
+	if location := resp2.Header.Get("Location"); location != "" {
+		parsed, err := resp2.Request.URL.Parse(location)
+		if err != nil {
+			return "", fmt.Errorf("captcha POST redirect: %w", err)
+		}
+		retpath = parsed.String()
 	}
 
-	utils.Debugf("[CAPTCHA] solve OK, retpath=%s", shortStr(retpath, 120))
-	return retpath, nil
+	acceptedURL, err := followCaptchaRetpath(ctx, client, retpath, userAgent)
+	if err != nil {
+		var redirect *captchaRedirectError
+		if errors.As(err, &redirect) && remaining > 1 {
+			return solveCaptchaDepth(redirect.url, jar, userAgent, rt, remaining-1)
+		}
+		return "", fmt.Errorf("captcha result rejected: %w", err)
+	}
+
+	utils.Debugf("[CAPTCHA] solve OK, retpath=%s", shortStr(acceptedURL, 120))
+	return acceptedURL, nil
 }
 
-// ---- парсинг showcaptchafast ----
+type captchaRedirectError struct {
+	url string
+}
+
+func (e *captchaRedirectError) Error() string {
+	return "another CAPTCHA at " + shortStr(e.url, 120)
+}
+
+func followCaptchaRetpath(ctx context.Context, client *http.Client, retpath, userAgent string) (string, error) {
+	currentURL := retpath
+	for i := 0; i < 10; i++ {
+		req, _ := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
+		setBrowserHeaders(req, userAgent)
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			loc, err := resp.Location()
+			if err != nil {
+				return "", err
+			}
+			if isCaptchaURL(loc.String()) {
+				return "", &captchaRedirectError{url: loc.String()}
+			}
+			currentURL = loc.String()
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("retpath status %d", resp.StatusCode)
+		}
+		if looksLikeCaptchaHTML(body) {
+			return "", &captchaRedirectError{url: currentURL}
+		}
+		return currentURL, nil
+	}
+	return "", fmt.Errorf("too many redirects from retpath")
+}
 
 type captchaSSRData struct {
-	UniqueKey string `json:"uniqueKey"`
-	Action    string `json:"action"`
-	Pow       struct {
-		Complexity int    `json:"complexity"`
-		Prefix     string `json:"prefix"`
-	} `json:"pow"`
-	Timestamp int64 `json:"timestamp"`
+	UniqueKey     string
+	PowPrefix     string
+	PowComplexity int
+	Timestamp     int64
+	Legacy        bool
 }
 
 var (
-	reSSRData    = regexp.MustCompile(`window\.__SSR_DATA__\s*=\s*JSON\.parse\(atob\("([^"]+)"\)\)`)
-	reFormAction = regexp.MustCompile(`<form[^>]*id="tmgrdfrend-form"[^>]*action="([^"]+)"`)
+	reSSRDataLegacy = regexp.MustCompile(`window\.__SSR_DATA__\s*=\s*JSON\.parse\(atob\("([^"]+)"\)\)`)
+	reFormTag       = regexp.MustCompile(`(?is)<form\b[^>]*>`)
+	reFormAction    = regexp.MustCompile(`(?is)\baction\s*=\s*["']([^"']+)["']`)
 )
 
-func parseCaptchaHTML(html string) (*captchaSSRData, string, error) {
-	m := reSSRData.FindStringSubmatch(html)
-	if len(m) < 2 {
-		return nil, "", fmt.Errorf("captcha: __SSR_DATA__ not found")
-	}
-	raw, err := base64.StdEncoding.DecodeString(m[1])
+func parseCaptchaHTML(pageHTML, pageURL string) (*captchaSSRData, string, error) {
+	formAction, err := captchaFormAction(pageHTML, pageURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("captcha: SSR_DATA base64: %w", err)
-	}
-	var ssr captchaSSRData
-	if err := json.Unmarshal(raw, &ssr); err != nil {
-		return nil, "", fmt.Errorf("captcha: SSR_DATA json: %w", err)
+		return nil, "", err
 	}
 
-	m2 := reFormAction.FindStringSubmatch(html)
-	if len(m2) < 2 {
-		return nil, "", fmt.Errorf("captcha: form action not found")
-	}
-	formAction := strings.ReplaceAll(m2[1], "&amp;", "&")
-	if strings.HasPrefix(formAction, "/") {
-		formAction = "https://docs.yandex.ru" + formAction
+	if match := reSSRDataLegacy.FindStringSubmatch(pageHTML); len(match) > 1 {
+		raw, err := base64.StdEncoding.DecodeString(match[1])
+		if err != nil {
+			return nil, "", fmt.Errorf("captcha: SSR_DATA base64: %w", err)
+		}
+		var legacy struct {
+			UniqueKey string `json:"uniqueKey"`
+			Pow       struct {
+				Prefix     string `json:"prefix"`
+				Complexity int    `json:"complexity"`
+			} `json:"pow"`
+			Timestamp int64 `json:"timestamp"`
+		}
+		if err := json.Unmarshal(raw, &legacy); err != nil {
+			return nil, "", fmt.Errorf("captcha: SSR_DATA json: %w", err)
+		}
+		return &captchaSSRData{
+			UniqueKey:     legacy.UniqueKey,
+			PowPrefix:     legacy.Pow.Prefix,
+			PowComplexity: legacy.Pow.Complexity,
+			Timestamp:     legacy.Timestamp,
+			Legacy:        true,
+		}, formAction, nil
 	}
 
-	return &ssr, formAction, nil
+	uniqueKey, _ := captchaJSStringField(pageHTML, "uniqueKey")
+	powPrefix, _ := captchaJSStringField(pageHTML, "powPrefix")
+	formActionValue, hasFormAction := captchaJSStringField(pageHTML, "formAction")
+	if hasFormAction && formActionValue != "" {
+		formAction, err = resolveURL(pageURL, formActionValue)
+		if err != nil {
+			return nil, "", fmt.Errorf("captcha: form action: %w", err)
+		}
+	}
+	complexityText, _ := captchaJSStringField(pageHTML, "powComplexity")
+	complexity, err := strconv.Atoi(complexityText)
+	if err != nil {
+		return nil, "", fmt.Errorf("captcha: powComplexity: %w", err)
+	}
+	timestampText, _ := captchaJSStringField(pageHTML, "timestamp")
+	timestamp, _ := strconv.ParseInt(timestampText, 10, 64)
+	if powPrefix == "" {
+		return nil, "", fmt.Errorf("captcha: powPrefix not found")
+	}
+	return &captchaSSRData{
+		UniqueKey:     uniqueKey,
+		PowPrefix:     powPrefix,
+		PowComplexity: complexity,
+		Timestamp:     timestamp,
+	}, formAction, nil
 }
 
-// ---- PoW ----
+func captchaJSStringField(source, field string) (string, bool) {
+	pattern := regexp.MustCompile(`(?:^|[,{}])\s*` + regexp.QuoteMeta(field) + `\s*:\s*("(?:\\.|[^"\\])*")`)
+	match := pattern.FindStringSubmatch(source)
+	if len(match) < 2 {
+		return "", false
+	}
+	value, err := strconv.Unquote(match[1])
+	return value, err == nil
+}
 
-func solveCaptchaPoW(prefixHex string, complexity int) (string, int) {
+func captchaFormAction(pageHTML, pageURL string) (string, error) {
+	formTag := reFormTag.FindString(pageHTML)
+	if formTag == "" {
+		if action, ok := captchaJSStringField(pageHTML, "formAction"); ok {
+			return resolveURL(pageURL, action)
+		}
+		return "", fmt.Errorf("captcha: form not found")
+	}
+	match := reFormAction.FindStringSubmatch(formTag)
+	if len(match) < 2 {
+		return "", fmt.Errorf("captcha: form action not found")
+	}
+	return resolveURL(pageURL, html.UnescapeString(match[1]))
+}
+
+func resolveURL(baseURL, ref string) (string, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := base.Parse(ref)
+	if err != nil {
+		return "", err
+	}
+	return parsed.String(), nil
+}
+
+func originOf(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func isCaptchaURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	path := strings.ToLower(u.Path)
+	return strings.Contains(path, "showcaptcha") || strings.Contains(path, "checkcaptcha")
+}
+
+func looksLikeCaptchaHTML(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "captcha_smart") ||
+		strings.Contains(lower, "showcaptcha") ||
+		strings.Contains(lower, "checkcaptcha") ||
+		strings.Contains(lower, "smartcaptcha") ||
+		strings.Contains(lower, "are you not a robot")
+}
+
+func solveCaptchaPoW(ctx context.Context, prefixHex string, complexity int) (string, int, time.Duration, error) {
+	if complexity < 0 || complexity > sha256.Size*8 {
+		return "", 0, 0, fmt.Errorf("invalid complexity %d", complexity)
+	}
 	prefix, err := hexDecode(prefixHex)
 	if err != nil || len(prefix) == 0 {
 		prefix = []byte(prefixHex)
 	}
 
+	started := time.Now()
 	var nonce [16]byte
 	for attempts := 1; attempts < 10_000_000; attempts++ {
-		ts := uint64(time.Now().UnixMilli())
-		putU64LE(nonce[0:8], ts)
-		putU64LE(nonce[8:16], uint64(rand.Int63()))
+		if attempts%1024 == 0 {
+			select {
+			case <-ctx.Done():
+				return "", attempts, time.Since(started), ctx.Err()
+			default:
+			}
+		}
+		binary.BigEndian.PutUint64(nonce[:8], uint64(time.Now().UnixMilli()))
+		if _, err := rand.Read(nonce[8:]); err != nil {
+			return "", attempts, time.Since(started), err
+		}
 
-		h := sha256.New()
-		h.Write(nonce[:])
-		h.Write(prefix)
-		sum := h.Sum(nil)
-
-		if captchaCheckComplexity(sum, complexity) {
-			return hexEncode(nonce[:]), attempts
+		sum := captchaHash(prefix, nonce[:])
+		if complexity == 0 || captchaCheckComplexity(sum[:], complexity) {
+			return hexEncode(nonce[:]), attempts, time.Since(started), nil
 		}
 	}
-	return "", 0
+	return "", 10_000_000, time.Since(started), fmt.Errorf("proof of work exhausted")
 }
 
-// captchaCheckComplexity — точная копия checkComplexity из fp.js.
-func captchaCheckComplexity(h []byte, complexity int) bool {
-	if complexity < 0 || complexity > 8*len(h) {
+func captchaHash(prefix, nonce []byte) [sha256.Size]byte {
+	h := sha256.New()
+	_, _ = h.Write(prefix)
+	_, _ = h.Write(nonce)
+	var sum [sha256.Size]byte
+	copy(sum[:], h.Sum(nil))
+	return sum
+}
+
+func captchaCheckComplexity(hash []byte, complexity int) bool {
+	if complexity < 0 || complexity > len(hash)*8 {
 		return false
 	}
-	e, o := 0, 0
-	for e <= complexity-8 {
-		if h[o] != 0 {
+	fullBytes := complexity / 8
+	for _, b := range hash[:fullBytes] {
+		if b != 0 {
 			return false
 		}
-		e += 8
-		o++
 	}
-	mask := byte(255) << uint(8+e-complexity)
-	return h[o]&mask == 0
+	remaining := complexity % 8
+	if remaining == 0 {
+		return true
+	}
+	mask := byte(0xff) << (8 - remaining)
+	return hash[fullBytes]&mask == 0
 }
 
-// ---- fingerprint ----
+func buildLegacyCaptchaFingerprint(nonceHex, uniqueKey string, elapsed time.Duration) map[string]interface{} {
+	end := float64(elapsed.Milliseconds())
+	return map[string]interface{}{
+		"start": 0.0,
+		"end":   end,
+		"factors": map[string]interface{}{
+			"m10": map[string]interface{}{
+				"value": nonceHex + ";133",
+				"start": 0.0,
+				"end":   end,
+			},
+		},
+		"version":   "1.8.2",
+		"uniqueKey": uniqueKey,
+	}
+}
 
 func buildCaptchaFingerprint(nonceHex, userAgent string) map[string]interface{} {
 	return map[string]interface{}{
@@ -277,22 +473,32 @@ func buildCaptchaFingerprint(nonceHex, userAgent string) map[string]interface{} 
 	}
 }
 
+func encodeCaptchaJSON(value interface{}) string {
+	raw, _ := json.Marshal(value)
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func encodeCaptchaPoWData(prefix, nonce string, calcTime int64) string {
+	return encodeCaptchaJSON(struct {
+		PowNonce    string `json:"powNonce"`
+		PowCalcTime int64  `json:"powCalcTime"`
+		PowPrefix   string `json:"powPrefix"`
+	}{nonce, calcTime, prefix})
+}
+
 func encodeCaptchaFingerprint(fp map[string]interface{}) string {
 	raw, _ := json.Marshal(fp)
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
-	w.Write(raw)
-	w.Close()
+	_, _ = w.Write(raw)
+	_ = w.Close()
 	return "~" + base64.StdEncoding.EncodeToString(buf.Bytes()) + "~"
 }
-
-// ---- helpers ----
 
 func setBrowserHeaders(req *http.Request, userAgent string) {
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
 	req.Header.Set("Sec-GPC", "1")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 	req.Header.Set("Sec-Fetch-Dest", "document")
@@ -301,15 +507,14 @@ func setBrowserHeaders(req *http.Request, userAgent string) {
 	req.Header.Set("Sec-Fetch-User", "?1")
 	req.Header.Set("Pragma", "no-cache")
 	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Connection", "keep-alive")
 }
 
 func hexEncode(b []byte) string {
-	const h = "0123456789abcdef"
+	const hex = "0123456789abcdef"
 	out := make([]byte, len(b)*2)
 	for i, v := range b {
-		out[i*2] = h[v>>4]
-		out[i*2+1] = h[v&0x0f]
+		out[i*2] = hex[v>>4]
+		out[i*2+1] = hex[v&0x0f]
 	}
 	return string(out)
 }
@@ -339,17 +544,6 @@ func hexVal(c byte) int {
 		return int(c-'A') + 10
 	}
 	return -1
-}
-
-func putU64LE(b []byte, v uint64) {
-	b[0] = byte(v)
-	b[1] = byte(v >> 8)
-	b[2] = byte(v >> 16)
-	b[3] = byte(v >> 24)
-	b[4] = byte(v >> 32)
-	b[5] = byte(v >> 40)
-	b[6] = byte(v >> 48)
-	b[7] = byte(v >> 56)
 }
 
 func mustMarshal(v interface{}) []byte {

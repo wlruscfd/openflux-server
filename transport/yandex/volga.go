@@ -162,6 +162,7 @@ func authorize(docURL string) (*volgaAuth, error) {
 	var finalBody []byte
 	var finalURL string
 	currentURL := docURL
+	captchaAttempts := 0
 
 	for i := 0; i < 10; i++ {
 		req, _ := http.NewRequest("GET", currentURL, nil)
@@ -181,13 +182,30 @@ func authorize(docURL string) (*volgaAuth, error) {
 
 		utils.Debugf("[VOLGA] GET %s -> %d (%d bytes)", currentURL, resp.StatusCode, len(body))
 
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && looksLikeCaptchaHTML(body) {
+			if captchaAttempts > 0 {
+				return nil, fmt.Errorf("captcha solve: challenge remained after solve")
+			}
+			captchaAttempts++
+			utils.Debugf("[VOLGA] captcha page returned directly, solving...")
+			if _, cerr := solveCaptcha(currentURL, jar, volgaUserAgent, session.Transport); cerr != nil {
+				return nil, fmt.Errorf("captcha solve: %w", cerr)
+			}
+			currentURL = docURL
+			continue
+		}
+
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			loc := resp.Header.Get("Location")
 			if loc == "" {
 				return nil, fmt.Errorf("redirect without Location from %s", currentURL)
 			}
 
-			if strings.Contains(loc, "showcaptchafast") {
+			if isCaptchaURL(loc) {
+				if captchaAttempts > 0 {
+					return nil, fmt.Errorf("captcha solve: challenge remained after solve")
+				}
+				captchaAttempts++
 				utils.Debugf("[VOLGA] captcha required, solving...")
 				if _, cerr := solveCaptcha(currentURL, jar, volgaUserAgent, session.Transport); cerr != nil {
 					return nil, fmt.Errorf("captcha solve: %w", cerr)
@@ -197,11 +215,11 @@ func authorize(docURL string) (*volgaAuth, error) {
 				continue
 			}
 
-			if strings.HasPrefix(loc, "/") {
-				u, _ := url.Parse(currentURL)
-				loc = u.Scheme + "://" + u.Host + loc
+			next, err := resp.Location()
+			if err != nil {
+				return nil, fmt.Errorf("redirect from %s: %w", currentURL, err)
 			}
-			currentURL = loc
+			currentURL = next.String()
 			continue
 		}
 

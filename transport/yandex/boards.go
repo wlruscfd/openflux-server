@@ -212,12 +212,20 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		loc := resp.Header.Get("Location")
-		if strings.Contains(loc, "showcaptchafast") {
+		if loc == "" {
+			return fmt.Errorf("boards: redirect without Location")
+		}
+		if isCaptchaURL(loc) {
 			utils.Debugf("[BOARDS] redirect to captcha: %s", shortStr(loc, 100))
 			return errCaptchaRequired
 		}
+		return fmt.Errorf("boards: unexpected redirect to %s", shortStr(loc, 100))
 	}
-	io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	if looksLikeCaptchaHTML(body) {
+		utils.Debugf("[BOARDS] captcha page returned directly")
+		return errCaptchaRequired
+	}
 	return nil
 }
 
@@ -251,8 +259,8 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 			}
 			utils.Debugf("[BOARDS] captcha solved, re-fetching whiteboard")
 
-			if err := t.getAllowCaptcha(client, docURL, hash); err != nil && err != errCaptchaRequired {
-				return boardsInfo{}, fmt.Errorf("GET whiteboard (post-captcha): %w", err)
+			if err := t.getAllowCaptcha(client, docURL, hash); err != nil {
+				return boardsInfo{}, fmt.Errorf("%w: %v", errBoardsCaptchaBlocked, err)
 			}
 		} else {
 			return boardsInfo{}, err

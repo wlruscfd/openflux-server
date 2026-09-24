@@ -952,6 +952,26 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 
 	currentURL := url
 	var resp *http.Response
+	var htmlBytes []byte
+	var finalCookies []*http.Cookie
+	var finalURL *neturl.URL
+	captchaAttempts := 0
+	solveChallenge := func() error {
+		if captchaAttempts > 0 {
+			return errCaptchaBlocked
+		}
+		captchaAttempts++
+		t.debugf("captcha challenge detected, solving via PoW")
+		t.EmitEvent(transport.EventCaptchaRequired, url)
+		if _, cerr := solveCaptcha(currentURL, jar, browserUserAgent, client.Transport); cerr != nil {
+			t.debugf("PoW captcha solve failed: %v", cerr)
+			return fmt.Errorf("%w: %v", errCaptchaBlocked, cerr)
+		}
+		t.debugf("PoW captcha solved, retrying")
+		currentURL = url
+		return nil
+	}
+
 	for hop := 0; hop < 10; hop++ {
 		req, _ := http.NewRequest("GET", currentURL, nil)
 		applyBrowserGetHeaders(req.Header)
@@ -961,7 +981,17 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			return YandexDocsInfo{}, err
 		}
 
-		if resp.StatusCode == 200 {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			htmlBytes, _ = io.ReadAll(resp.Body)
+			finalCookies = resp.Cookies()
+			finalURL = resp.Request.URL
+			resp.Body.Close()
+			if looksLikeCaptchaHTML(htmlBytes) {
+				if err := solveChallenge(); err != nil {
+					return YandexDocsInfo{}, err
+				}
+				continue
+			}
 			break
 		}
 		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
@@ -969,41 +999,36 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			return YandexDocsInfo{}, fmt.Errorf("unexpected status %d at %s", resp.StatusCode, currentURL)
 		}
 
-		loc := resp.Header.Get("Location")
+		loc, err := resp.Location()
 		resp.Body.Close()
-		if loc == "" {
-			return YandexDocsInfo{}, fmt.Errorf("redirect without Location from %s", currentURL)
+		if err != nil {
+			return YandexDocsInfo{}, fmt.Errorf("redirect from %s: %w", currentURL, err)
 		}
 
-		if strings.Contains(loc, "showcaptchafast") {
-			t.debugf("captcha redirect detected, solving via PoW")
-			t.EmitEvent(transport.EventCaptchaRequired, url)
-			if _, cerr := solveCaptcha(currentURL, jar, browserUserAgent, client.Transport); cerr != nil {
-				t.debugf("PoW captcha solve failed: %v", cerr)
-				return YandexDocsInfo{}, errCaptchaBlocked
+		if isCaptchaURL(loc.String()) {
+			if err := solveChallenge(); err != nil {
+				return YandexDocsInfo{}, err
 			}
-			t.debugf("PoW captcha solved, retrying")
-			currentURL = url
 			continue
 		}
-		currentURL = loc
+		currentURL = loc.String()
 	}
 
-	if resp == nil || resp.StatusCode != 200 {
+	if resp == nil || len(htmlBytes) == 0 || finalURL == nil {
+		if captchaAttempts > 0 {
+			return YandexDocsInfo{}, errCaptchaBlocked
+		}
 		return YandexDocsInfo{}, fmt.Errorf("no successful response after redirects")
 	}
-	defer resp.Body.Close()
-
-	htmlBytes, _ := io.ReadAll(resp.Body)
 	html := string(htmlBytes)
 
 	t.debugf("fetchDocInfo GET %s -> %d (%d bytes)", url, resp.StatusCode, len(html))
 
 	var cookies []string
-	for _, c := range resp.Cookies() {
+	for _, c := range finalCookies {
 		cookies = append(cookies, fmt.Sprintf("%s=%s", c.Name, c.Value))
 	}
-	for _, c := range jar.Cookies(resp.Request.URL) {
+	for _, c := range jar.Cookies(finalURL) {
 		cookies = append(cookies, fmt.Sprintf("%s=%s", c.Name, c.Value))
 	}
 

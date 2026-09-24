@@ -2,8 +2,7 @@ package yandex
 
 import "net/http"
 
-// Deliberately bare/vague, not a specific version - a convincing version string is what triggers Yandex's CAPTCHA on a datacenter IP, confirmed by testing.
-const browserUserAgent = "Mozilla/5.0"
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 // applyBrowserGetHeaders deliberately skips Accept-Encoding (would disable Go's transparent decompression) and Chromium-only Sec-Ch-Ua hints (a Firefox UA sending them is a bigger tell than sending neither).
 func applyBrowserGetHeaders(h http.Header) {
