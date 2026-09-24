@@ -322,16 +322,25 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 }
 
 func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, content interface{}) error {
-	raw, _ := json.Marshal(content)
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
 	contentB64 := base64.StdEncoding.EncodeToString(raw)
-	form := url.Values{}
-	form.Set("action", action)
-	form.Set("content", contentB64)
+	payload, err := json.Marshal(map[string]string{
+		"action":  action,
+		"content": contentB64,
+	})
+	if err != nil {
+		return err
+	}
 
-	req, _ := http.NewRequest("POST", "https://"+boardsBase+"/api",
-		strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", "https://"+boardsBase+"/api", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("User-Agent", boardsUA)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	req.Header.Set("Referer", "https://"+boardsBase+"/guest/?hash="+hash)
@@ -353,16 +362,25 @@ func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, cont
 }
 
 func (t *BoardsTransport) getWhiteboardInfo(client *http.Client, hash string) (map[string]string, error) {
-	raw, _ := json.Marshal(map[string]string{"hash": hash})
+	raw, err := json.Marshal(map[string]string{"hash": hash})
+	if err != nil {
+		return nil, err
+	}
 	contentB64 := base64.StdEncoding.EncodeToString(raw)
-	form := url.Values{}
-	form.Set("action", "get-whiteboard-info")
-	form.Set("content", contentB64)
+	payload, err := json.Marshal(map[string]string{
+		"action":  "get-whiteboard-info",
+		"content": contentB64,
+	})
+	if err != nil {
+		return nil, err
+	}
 
-	req, _ := http.NewRequest("POST", "https://"+boardsBase+"/api",
-		strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", "https://"+boardsBase+"/api", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("User-Agent", boardsUA)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	req.Header.Set("Referer", "https://"+boardsBase+"/guest/?hash="+hash)

@@ -49,6 +49,10 @@ type DocSession struct {
 func (s *DocSession) safeWrite(messageType int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if err := s.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	defer s.Conn.SetWriteDeadline(time.Time{})
 	return s.Conn.WriteMessage(messageType, data)
 }
 
@@ -95,6 +99,17 @@ func (t *MailruDocsTransport) Start() error {
 	utils.SafeGo("mailru.keepAlive", t.keepAliveLoop)
 	t.connectToDoc(0)
 
+	return nil
+}
+
+func (t *MailruDocsTransport) Stop() error {
+	t.BaseTransport.Stop()
+	t.Mu.RLock()
+	session := t.session
+	t.Mu.RUnlock()
+	if session != nil && session.Conn != nil {
+		_ = session.Conn.Close()
+	}
 	return nil
 }
 
@@ -190,16 +205,21 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		t.Mu.Lock()
 		t.session = session
-		t.SetConnected(true)
 		t.Mu.Unlock()
 
-		if existingSession == nil {
-			utils.SafeGo("mailru.writer", t.writerLoop)
+		if !t.IsRunning() {
+			_ = conn.Close()
+			return
 		}
 
 		// Auth fires immediately without waiting for the server's handshake frames, since Mail.ru buffers and can delay a fresh joiner's ack by up to ~30s.
 		auth1 := fmt.Sprintf(`40{"token":"%s"}`, info.Token)
-		session.safeWrite(websocket.TextMessage, []byte(auth1))
+		if err := session.safeWrite(websocket.TextMessage, []byte(auth1)); err != nil {
+			_ = conn.Close()
+			t.SetConnected(false)
+			t.scheduleReconnect(attempt)
+			return
+		}
 
 		authMsg := map[string]interface{}{
 			"type":                "auth",
@@ -239,7 +259,18 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			"supportAuthChangesAck": true,
 		}
 		messagePart, _ := json.Marshal([]interface{}{"message", authMsg})
-		session.safeWrite(websocket.TextMessage, []byte(fmt.Sprintf("42%s", string(messagePart))))
+		if err := session.safeWrite(websocket.TextMessage, []byte(fmt.Sprintf("42%s", string(messagePart)))); err != nil {
+			_ = conn.Close()
+			t.SetConnected(false)
+			t.scheduleReconnect(attempt)
+			return
+		}
+
+		t.SetConnected(true)
+		t.EmitEvent(transport.EventConnected, "")
+		if existingSession == nil {
+			utils.SafeGo("mailru.writer", t.writerLoop)
+		}
 
 		connectedAt := time.Now()
 		for t.IsRunning() {
@@ -279,6 +310,10 @@ func (t *MailruDocsTransport) writerLoop() {
 
 	var pending []byte
 	for t.IsRunning() {
+		if !t.IsConnected() {
+			time.Sleep(15 * time.Millisecond)
+			continue
+		}
 		if pending == nil {
 			packet, ok := <-queue
 			if !ok {
