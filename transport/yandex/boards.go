@@ -42,15 +42,16 @@ const (
 )
 
 type boardsInfo struct {
-	hash         string
-	name         string
-	userHash     string
-	jwt          string
-	cookies      []*http.Cookie
-	wsHost       string
-	session      string
-	dashboard    string
-	currentSlide string
+	hash            string
+	name            string
+	userHash        string
+	participantHash string
+	jwt             string
+	cookies         []*http.Cookie
+	wsHost          string
+	session         string
+	dashboard       string
+	currentSlide    string
 }
 
 type boardsSession struct {
@@ -315,17 +316,22 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 	if wsHost == "" {
 		wsHost = boardsSocketHostDefault
 	}
+	participantHash := state["participant_hash"]
+	if stateUserHash := state["user_hash"]; stateUserHash != "" {
+		userHash = stateUserHash
+	}
 
 	return boardsInfo{
-		hash:         hash,
-		name:         name,
-		userHash:     userHash,
-		jwt:          jwt,
-		cookies:      cookies,
-		wsHost:       wsHost,
-		session:      "",
-		dashboard:    state["dashboard"],
-		currentSlide: state["current_slide"],
+		hash:            hash,
+		name:            name,
+		userHash:        userHash,
+		participantHash: participantHash,
+		jwt:             jwt,
+		cookies:         cookies,
+		wsHost:          wsHost,
+		session:         "",
+		dashboard:       state["dashboard"],
+		currentSlide:    state["current_slide"],
 	}, nil
 }
 
@@ -410,6 +416,10 @@ func (t *BoardsTransport) getWhiteboardInfo(client *http.Client, hash string) (m
 			} `json:"properties"`
 			Items string `json:"items"`
 		} `json:"presentation"`
+		Participant struct {
+			Hash     string `json:"hash"`
+			UserHash string `json:"userHash"`
+		} `json:"participant"`
 		SocketServers []struct {
 			IP string `json:"ip"`
 		} `json:"socket_servers"`
@@ -432,6 +442,12 @@ func (t *BoardsTransport) getWhiteboardInfo(client *http.Client, hash string) (m
 				}
 			}
 		}
+	}
+	if info.Participant.Hash != "" {
+		out["participant_hash"] = info.Participant.Hash
+	}
+	if info.Participant.UserHash != "" {
+		out["user_hash"] = info.Participant.UserHash
 	}
 	if len(info.SocketServers) > 0 {
 		out["ws_host"] = info.SocketServers[0].IP
@@ -578,7 +594,10 @@ func (t *BoardsTransport) connectAndServe(attempt int, info boardsInfo) error {
 	}
 	utils.Debugf("[BOARDS] WS connected: %s", info.wsHost)
 
-	participant := info.userHash
+	participant := info.participantHash
+	if participant == "" {
+		participant = info.userHash
+	}
 	creator := info.userHash
 	sess := &boardsSession{
 		Info:  info,
@@ -904,8 +923,9 @@ func (t *BoardsTransport) handleParticipantConnected(sess *boardsSession, raw js
 
 	if d.Participant.Name == sess.Info.name && d.Participant.Hash != "" {
 		h := d.Participant.Hash
+		sess.participant.Store(&h)
 		sess.creatorHash.Store(&h)
-		utils.Debugf("[BOARDS] creatorHash from participant-connected: %s", shortStr(h, 8))
+		utils.Debugf("[BOARDS] participant/creatorHash from participant-connected: %s", shortStr(h, 8))
 	}
 }
 
@@ -1083,7 +1103,8 @@ func (t *BoardsTransport) handle431(sess *boardsSession, raw []byte) {
 	}
 	if snap.Participant.ParticipantHash != "" {
 		ch := snap.Participant.ParticipantHash
+		sess.participant.Store(&ch)
 		sess.creatorHash.Store(&ch)
-		utils.Debugf("[BOARDS] creatorHash from 431/participantHash: %s", shortStr(ch, 8))
+		utils.Debugf("[BOARDS] participant/creatorHash from 431: %s", shortStr(ch, 8))
 	}
 }

@@ -49,7 +49,15 @@ type DocSession struct {
 func (s *DocSession) safeWrite(messageType int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.Conn.WriteMessage(messageType, data)
+	if err := s.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	err := s.Conn.WriteMessage(messageType, data)
+	_ = s.Conn.SetWriteDeadline(time.Time{})
+	if err != nil {
+		_ = s.Conn.Close()
+	}
+	return err
 }
 
 type MailruDocsTransport struct {
@@ -84,6 +92,26 @@ func normalizeWeblink(weblink string) string {
 		}
 	}
 	return weblink
+}
+
+func (t *MailruDocsTransport) Stop() error {
+	t.BaseTransport.Stop()
+	t.Mu.RLock()
+	session := t.session
+	t.Mu.RUnlock()
+	if session != nil && session.Conn != nil {
+		_ = session.Conn.Close()
+	}
+	return nil
+}
+
+func (t *MailruDocsTransport) ForceReconnect() {
+	t.Mu.RLock()
+	session := t.session
+	t.Mu.RUnlock()
+	if session != nil && session.Conn != nil {
+		_ = session.Conn.Close()
+	}
 }
 
 func (t *MailruDocsTransport) Start() error {
@@ -244,7 +272,9 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		connectedAt := time.Now()
 		for t.IsRunning() {
+			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			_, message, err := conn.ReadMessage()
+			_ = conn.SetReadDeadline(time.Time{})
 			if err != nil {
 				utils.Debugf("[M-DOCS] Read error: %v", err)
 				t.SetConnected(false)
@@ -323,6 +353,7 @@ func (t *MailruDocsTransport) keepAliveLoop() {
 			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
 				utils.Debugf("[M-DOCS] Keep-alive failed: %v", err)
 				t.SetConnected(false)
+				_ = session.Conn.Close()
 			}
 		}
 	}
