@@ -190,6 +190,28 @@ func parseCookieHeader(header string) []*http.Cookie {
 	return req.Cookies()
 }
 
+func mergeCookieHeaders(fresh, provided string) string {
+	values := make(map[string]string)
+	order := make([]string, 0)
+	add := func(header string, override bool) {
+		for _, c := range parseCookieHeader(header) {
+			if _, ok := values[c.Name]; !ok {
+				order = append(order, c.Name)
+			}
+			if override || values[c.Name] == "" {
+				values[c.Name] = c.Value
+			}
+		}
+	}
+	add(fresh, false)
+	add(provided, true)
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		parts = append(parts, name+"="+values[name])
+	}
+	return strings.Join(parts, "; ")
+}
+
 // EnableSelfCompression makes writerLoop zstd-compress a whole batch of raw packets once the peer's keepalive proves it understands zstdBatchMarker, beating per-packet LZ4's missed cross-packet redundancy; not for use alongside external CompressedTransport wrapping.
 func (t *YandexDocsTransport) EnableSelfCompression() {
 	t.selfCompress = true
@@ -1075,8 +1097,9 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	}
 
 	if joined := strings.Join(cookies, "; "); joined != "" {
+		merged := mergeCookieHeaders(joined, t.getProvidedCookies())
 		t.Mu.Lock()
-		t.providedCookies = joined
+		t.providedCookies = merged
 		t.Mu.Unlock()
 	}
 

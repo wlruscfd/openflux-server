@@ -267,7 +267,7 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		if err == errCaptchaRequired {
 			utils.Debugf("[BOARDS] captcha required, solving...")
 			t.EmitEvent(transport.EventCaptchaRequired, docURL)
-			if t.captchaSolveMode == CaptchaSolveModeExternal {
+			if t.captchaSolveMode == CaptchaSolveModeExternal || t.captchaSolveMode == CaptchaSolveModeOff {
 				return boardsInfo{}, errCaptchaBlocked
 			}
 			if _, cerr := solveCaptcha(docURL, jar, boardsUA, client.Transport); cerr != nil {
