@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -180,8 +179,10 @@ func (t *MailruDocsTransport) Send(data []byte) error {
 		return fmt.Errorf("no active session")
 	}
 
+	packet := make([]byte, len(data))
+	copy(packet, data)
 	select {
-	case session.WriteQueue <- data:
+	case session.WriteQueue <- packet:
 		t.RecordSend(len(data))
 		return nil
 	default:
@@ -223,10 +224,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		dialer := websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
-			NetDialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
+			NetDialContext:   transport.ProtectedDialer().DialContext,
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", mailruUserAgent)

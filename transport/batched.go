@@ -23,6 +23,8 @@ type BatchedTransport struct {
 	Transport
 
 	queue         chan []byte
+	stop          chan struct{}
+	stopOnce      sync.Once
 	lingerMs      int
 	maxBatchBytes int
 	maxBatchCount int
@@ -46,6 +48,7 @@ func NewBatchedTransport(inner Transport) *BatchedTransport {
 	return &BatchedTransport{
 		Transport:     inner,
 		queue:         make(chan []byte, batchQueueDepth),
+		stop:          make(chan struct{}),
 		lingerMs:      envInt("OPENFLUX_BATCH_LINGER_MS", defaultLingerMs),
 		maxBatchBytes: envInt("OPENFLUX_BATCH_BYTES", defaultMaxBatchBytes),
 		maxBatchCount: envInt("OPENFLUX_BATCH_COUNT", defaultMaxBatchCount),
@@ -63,6 +66,7 @@ func (b *BatchedTransport) Start() error {
 
 func (b *BatchedTransport) Stop() error {
 	b.running.Store(false)
+	b.stopOnce.Do(func() { close(b.stop) })
 	return b.Transport.Stop()
 }
 
@@ -78,6 +82,8 @@ func (b *BatchedTransport) Send(data []byte) error {
 	select {
 	case b.queue <- p:
 		return nil
+	case <-b.stop:
+		return fmt.Errorf("batch transport stopped")
 	default:
 		return fmt.Errorf("batch queue full")
 	}
@@ -108,9 +114,11 @@ func (b *BatchedTransport) Receive(callback func([]byte)) {
 
 func (b *BatchedTransport) flushLoop() {
 	for b.running.Load() {
-		first, ok := <-b.queue
-		if !ok {
+		var first []byte
+		select {
+		case <-b.stop:
 			return
+		case first = <-b.queue:
 		}
 		batch := [][]byte{first}
 		size := 2 + len(first)
@@ -118,11 +126,9 @@ func (b *BatchedTransport) flushLoop() {
 	drainNow:
 		for size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
 			select {
-			case p, ok := <-b.queue:
-				if !ok {
-					b.Transport.Send(EncodeBatch(batch))
-					return
-				}
+			case <-b.stop:
+				return
+			case p := <-b.queue:
 				batch = append(batch, p)
 				size += 2 + len(p)
 			default:

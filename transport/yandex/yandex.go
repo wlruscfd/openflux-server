@@ -269,8 +269,10 @@ func (t *YandexDocsTransport) Send(data []byte) error {
 		return fmt.Errorf("no active session")
 	}
 
+	packet := make([]byte, len(data))
+	copy(packet, data)
 	select {
-	case session.WriteQueue <- data:
+	case session.WriteQueue <- packet:
 		t.RecordSend(len(data))
 		return nil
 	default:

@@ -68,7 +68,14 @@ type boardsSession struct {
 func (s *boardsSession) safeWrite(msgType int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.Conn.WriteMessage(msgType, data)
+	if err := s.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	err := s.Conn.WriteMessage(msgType, data)
+	if err != nil {
+		_ = s.Conn.Close()
+	}
+	return err
 }
 
 func (s *boardsSession) writeEventObj(ns string, obj interface{}) error {
