@@ -4,7 +4,6 @@ package mailru
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,13 +24,6 @@ import (
 const mailruUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
-
-const (
-	mailruBatchMagic    = "OFB1"
-	mailruBatchMaxCount = 64
-	mailruBatchMaxBytes = 8192
-	mailruBatchLinger   = 3 * time.Millisecond
-)
 
 type MailruDocsInfo struct {
 	Token        string
@@ -119,39 +111,6 @@ func (t *MailruDocsTransport) ForceReconnect() {
 	if session != nil && session.Conn != nil {
 		_ = session.Conn.Close()
 	}
-}
-
-func encodeMailruBatch(packets [][]byte) []byte {
-	var buf bytes.Buffer
-	buf.WriteString(mailruBatchMagic)
-	var size [2]byte
-	for _, packet := range packets {
-		if len(packet) > 0xffff {
-			continue
-		}
-		binary.BigEndian.PutUint16(size[:], uint16(len(packet)))
-		buf.Write(size[:])
-		buf.Write(packet)
-	}
-	return buf.Bytes()
-}
-
-func decodeMailruBatch(data []byte) ([][]byte, bool) {
-	if !bytes.HasPrefix(data, []byte(mailruBatchMagic)) {
-		return nil, false
-	}
-	data = data[len(mailruBatchMagic):]
-	packets := make([][]byte, 0, mailruBatchMaxCount)
-	for len(data) >= 2 {
-		size := int(binary.BigEndian.Uint16(data[:2]))
-		data = data[2:]
-		if size > len(data) {
-			return nil, false
-		}
-		packets = append(packets, data[:size])
-		data = data[size:]
-	}
-	return packets, len(data) == 0
 }
 
 func (t *MailruDocsTransport) Start() error {
@@ -347,48 +306,31 @@ func (t *MailruDocsTransport) writerLoop() {
 		return
 	}
 
-	var pending [][]byte
+	var pending []byte
 	for t.IsRunning() {
-		if len(pending) == 0 {
+		if pending == nil {
 			packet, ok := <-queue
 			if !ok {
 				return
 			}
-			pending = append(pending, packet)
+			pending = packet
 		}
-
-		total := len(pending[0])
-		timer := time.NewTimer(mailruBatchLinger)
-	collect:
-		for len(pending) < mailruBatchMaxCount && total < mailruBatchMaxBytes {
-			select {
-			case packet, ok := <-queue:
-				if !ok {
-					timer.Stop()
-					break collect
-				}
-				pending = append(pending, packet)
-				total += len(packet)
-			case <-timer.C:
-				break collect
-			}
-		}
-		timer.Stop()
 
 		t.Mu.RLock()
 		session := t.session
 		t.Mu.RUnlock()
 		if session == nil || session.Conn == nil {
+			// Mid-reconnect: hold the packet and retry rather than drop it.
 			time.Sleep(15 * time.Millisecond)
 			continue
 		}
 
-		payload := base64.StdEncoding.EncodeToString(encodeMailruBatch(pending))
+		payload := base64.StdEncoding.EncodeToString(pending)
 		msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
 		if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
 			utils.Debugf("[M-DOCS] Write error: %v", err)
 			time.Sleep(15 * time.Millisecond)
-			continue
+			continue // keep pending; the reconnect will bring up a new conn
 		}
 		pending = nil
 	}
@@ -446,14 +388,6 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 		decoded, err := base64.StdEncoding.DecodeString(base64Str)
 		if err != nil {
 			utils.Debugf("[M-DOCS] Base64 decode error: %v", err)
-			return
-		}
-
-		if packets, ok := decodeMailruBatch(decoded); ok {
-			for _, packet := range packets {
-				t.RecordReceive(len(packet))
-				t.CallReceive(packet)
-			}
 			return
 		}
 
