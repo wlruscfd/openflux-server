@@ -135,7 +135,8 @@ type YandexDocsTransport struct {
 	tag string
 
 	// providedCookies is set via ProvideCookies and resent on every future fetch.
-	providedCookies string
+	providedCookies         string
+	captchaCookieGeneration atomic.Uint64
 
 	captchaSolveMode CaptchaSolveMode
 }
@@ -145,7 +146,9 @@ type CaptchaSolveMode string
 
 const (
 	CaptchaSolveModeOff             CaptchaSolveMode = ""
+	CaptchaSolveModeNative          CaptchaSolveMode = "native"
 	CaptchaSolveModeHeadlessBrowser CaptchaSolveMode = "headless_browser"
+	CaptchaSolveModeExternal        CaptchaSolveMode = "external"
 )
 
 func (t *YandexDocsTransport) SetCaptchaSolveMode(mode CaptchaSolveMode) {
@@ -171,6 +174,7 @@ func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.Mu.Lock()
 	t.providedCookies = cookieStr
 	t.Mu.Unlock()
+	t.captchaCookieGeneration.Add(1)
 	t.debugf("received %d bytes of externally-solved cookies, forcing a reconnect", len(cookieStr))
 	t.ForceReconnect()
 }
@@ -297,10 +301,16 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 			userID = t.baseUserID + suffix
 		}
 
+		cookieGeneration := t.captchaCookieGeneration.Load()
 		info, err := t.fetchDocInfo(t.url, userID)
 		if err != nil {
 			t.debugf("fetchDocInfo failed: %v", err)
 			if errors.Is(err, errCaptchaBlocked) {
+				if t.captchaCookieGeneration.Load() != cookieGeneration {
+					t.debugf("captcha cookies changed during fetch, retrying without cooldown")
+					t.scheduleReconnect(attempt, reasonCaptchaBlocked, err)
+					return
+				}
 				if t.captchaSolveMode == CaptchaSolveModeHeadlessBrowser {
 					go t.tryHeadlessSolve(t.url)
 				}
@@ -963,6 +973,12 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 		captchaAttempts++
 		t.debugf("captcha challenge detected, solving via PoW")
 		t.EmitEvent(transport.EventCaptchaRequired, url)
+		if t.captchaSolveMode == CaptchaSolveModeExternal || t.captchaSolveMode == CaptchaSolveModeOff {
+			return errCaptchaBlocked
+		}
+		if t.captchaSolveMode != CaptchaSolveModeNative {
+			return errCaptchaBlocked
+		}
 		if _, cerr := solveCaptcha(currentURL, jar, browserUserAgent, client.Transport); cerr != nil {
 			t.debugf("PoW captcha solve failed: %v", cerr)
 			return fmt.Errorf("%w: %v", errCaptchaBlocked, cerr)
@@ -1005,13 +1021,17 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			return YandexDocsInfo{}, fmt.Errorf("redirect from %s: %w", currentURL, err)
 		}
 
-		if isCaptchaURL(loc.String()) {
+		nextURL, err := resp.Request.URL.Parse(loc.String())
+		if err != nil {
+			return YandexDocsInfo{}, fmt.Errorf("redirect from %s: %w", currentURL, err)
+		}
+		if isCaptchaURL(nextURL.String()) {
 			if err := solveChallenge(); err != nil {
 				return YandexDocsInfo{}, err
 			}
 			continue
 		}
-		currentURL = loc.String()
+		currentURL = nextURL.String()
 	}
 
 	if resp == nil || len(htmlBytes) == 0 || finalURL == nil {

@@ -100,6 +100,7 @@ func TestFetchDocInfoHandlesDirectCaptchaPage(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	tr := NewYandexDocsTransport(server.URL+"/doc", transport.DefaultConfig())
+	tr.SetCaptchaSolveMode(CaptchaSolveModeNative)
 	if _, err := tr.fetchDocInfo(server.URL+"/doc", "user1"); err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +143,7 @@ func TestFetchDocInfoHandlesCurrentShowcaptchaFlow(t *testing.T) {
 	defer server.Close()
 
 	tr := NewYandexDocsTransport(server.URL+"/doc", transport.DefaultConfig())
+	tr.SetCaptchaSolveMode(CaptchaSolveModeNative)
 	info, err := tr.fetchDocInfo(server.URL+"/doc", "user1")
 	if err != nil {
 		t.Fatal(err)

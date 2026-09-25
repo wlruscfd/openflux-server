@@ -43,6 +43,14 @@ func (m *MultiStreamTransport) Stop() error {
 	return nil
 }
 
+func (m *MultiStreamTransport) ProvideCookies(cookieStr string) {
+	for _, s := range m.streams {
+		if provider, ok := s.(CookieProvider); ok {
+			provider.ProvideCookies(cookieStr)
+		}
+	}
+}
+
 func (m *MultiStreamTransport) Send(data []byte) error {
 	return m.streams[streamIndex(data, len(m.streams))].Send(data)
 }

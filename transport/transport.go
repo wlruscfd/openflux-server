@@ -27,6 +27,10 @@ type Transport interface {
 	ForceReconnect()
 }
 
+type CookieProvider interface {
+	ProvideCookies(cookieStr string)
+}
+
 const (
 	EventConnecting = "connecting"
 	EventConnected  = "connected"

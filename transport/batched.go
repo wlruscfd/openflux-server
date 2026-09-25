@@ -66,6 +66,12 @@ func (b *BatchedTransport) Stop() error {
 	return b.Transport.Stop()
 }
 
+func (b *BatchedTransport) ProvideCookies(cookieStr string) {
+	if provider, ok := b.Transport.(CookieProvider); ok {
+		provider.ProvideCookies(cookieStr)
+	}
+}
+
 func (b *BatchedTransport) Send(data []byte) error {
 	p := make([]byte, len(data))
 	copy(p, data)

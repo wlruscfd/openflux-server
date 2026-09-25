@@ -98,8 +98,9 @@ type BoardsTransport struct {
 	closeOnce sync.Once
 	done      chan struct{}
 
-	cookiesMu       sync.Mutex
-	providedCookies string
+	cookiesMu        sync.Mutex
+	providedCookies  string
+	captchaSolveMode CaptchaSolveMode
 
 	wakeMu   sync.Mutex
 	wakeChan chan struct{}
@@ -111,6 +112,10 @@ func NewBoardsTransport(rawURL string, config transport.TransportConfig) *Boards
 		url:           rawURL,
 		done:          make(chan struct{}),
 	}
+}
+
+func (t *BoardsTransport) SetCaptchaSolveMode(mode CaptchaSolveMode) {
+	t.captchaSolveMode = mode
 }
 
 func (t *BoardsTransport) Start() error {
@@ -254,6 +259,9 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		if err == errCaptchaRequired {
 			utils.Debugf("[BOARDS] captcha required, solving...")
 			t.EmitEvent(transport.EventCaptchaRequired, docURL)
+			if t.captchaSolveMode == CaptchaSolveModeExternal {
+				return boardsInfo{}, errCaptchaBlocked
+			}
 			if _, cerr := solveCaptcha(docURL, jar, boardsUA, client.Transport); cerr != nil {
 				return boardsInfo{}, fmt.Errorf("%w: %v", errBoardsCaptchaBlocked, cerr)
 			}

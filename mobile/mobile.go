@@ -335,7 +335,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapYandex(yandex.NewYandexDocsTransport(cfg.DocURL, transportConfig), cfg, -1), nil
+		yd := yandex.NewYandexDocsTransport(cfg.DocURL, transportConfig)
+		yd.SetCaptchaSolveMode(yandex.CaptchaSolveModeExternal)
+		return wrapYandex(yd, cfg, -1), nil
 	case "volga":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
@@ -350,7 +352,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapBatched(yandex.NewBoardsTransport(cfg.DocURL, transportConfig), cfg), nil
+		boards := yandex.NewBoardsTransport(cfg.DocURL, transportConfig)
+		boards.SetCaptchaSolveMode(yandex.CaptchaSolveModeExternal)
+		return wrapBatched(boards, cfg), nil
 	case "mailru":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
@@ -362,7 +366,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		}
 		streams := make([]transport.Transport, len(cfg.DocURLs))
 		for i, url := range cfg.DocURLs {
-			streams[i] = wrapYandex(yandex.NewYandexDocsTransport(url, transportConfig), cfg, i)
+			yd := yandex.NewYandexDocsTransport(url, transportConfig)
+			yd.SetCaptchaSolveMode(yandex.CaptchaSolveModeExternal)
+			streams[i] = wrapYandex(yd, cfg, i)
 		}
 		return transport.NewMultiStreamTransport(streams), nil
 	default:

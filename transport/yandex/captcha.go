@@ -81,11 +81,15 @@ func solveCaptchaDepth(docURL string, jar http.CookieJar, userAgent string, rt h
 		if err != nil {
 			return "", fmt.Errorf("captcha redirect: %w", err)
 		}
-		if isCaptchaURL(loc.String()) {
-			captchaURL = loc.String()
+		nextURL, err := resp.Request.URL.Parse(loc.String())
+		if err != nil {
+			return "", fmt.Errorf("captcha redirect URL: %w", err)
+		}
+		if isCaptchaURL(nextURL.String()) {
+			captchaURL = nextURL.String()
 			break
 		}
-		currentURL = loc.String()
+		currentURL = nextURL.String()
 	}
 
 	if captchaURL == "" {
@@ -207,10 +211,14 @@ func followCaptchaRetpath(ctx context.Context, client *http.Client, retpath, use
 			if err != nil {
 				return "", err
 			}
-			if isCaptchaURL(loc.String()) {
-				return "", &captchaRedirectError{url: loc.String()}
+			nextURL, err := resp.Request.URL.Parse(loc.String())
+			if err != nil {
+				return "", err
 			}
-			currentURL = loc.String()
+			if isCaptchaURL(nextURL.String()) {
+				return "", &captchaRedirectError{url: nextURL.String()}
+			}
+			currentURL = nextURL.String()
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -297,13 +305,16 @@ func parseCaptchaHTML(pageHTML, pageURL string) (*captchaSSRData, string, error)
 }
 
 func captchaJSStringField(source, field string) (string, bool) {
-	pattern := regexp.MustCompile(`(?:^|[,{}])\s*` + regexp.QuoteMeta(field) + `\s*:\s*("(?:\\.|[^"\\])*")`)
+	pattern := regexp.MustCompile(`(?:^|[,{}])\s*` + regexp.QuoteMeta(field) + `\s*:\s*("(?:\\.|[^"\\])*"|-?[0-9]+(?:\.[0-9]+)?)`)
 	match := pattern.FindStringSubmatch(source)
 	if len(match) < 2 {
 		return "", false
 	}
-	value, err := strconv.Unquote(match[1])
-	return value, err == nil
+	if strings.HasPrefix(match[1], "\"") {
+		value, err := strconv.Unquote(match[1])
+		return value, err == nil
+	}
+	return match[1], true
 }
 
 func captchaFormAction(pageHTML, pageURL string) (string, error) {
