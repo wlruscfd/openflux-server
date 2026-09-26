@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-// listenOnBindableNonLoopback finds an address the tunneled stack can actually reach.
-// Loopback is out (the emulated network has no route for it) and so is the first non-loopback
-// address the OS reports: on some machines that is an APIPA address, which cannot be bound at
-// all - a failure that looks like a tunnel bug but is just the host's adapter list.
 func listenOnBindableNonLoopback(t *testing.T) net.Listener {
 	t.Helper()
 	addrs, err := net.InterfaceAddrs()
@@ -37,10 +33,6 @@ func listenOnBindableNonLoopback(t *testing.T) net.Listener {
 	return nil
 }
 
-// TestTunnelThroughputOverPipe measures the tunnel's own ceiling with a zero-latency transport:
-// one end streams bytes at a TCP server, the other reads them back through the tunneled stack.
-// Every real transport adds round trips on top, so this number is the difference between "the
-// tunnel is slow" and "the transport's latency is slow".
 func TestTunnelThroughputOverPipe(t *testing.T) {
 	ln := listenOnBindableNonLoopback(t)
 	defer ln.Close()
@@ -60,7 +52,6 @@ func TestTunnelThroughputOverPipe(t *testing.T) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				// Drain whatever the client sends so the send side never blocks.
 				go io.Copy(io.Discard, c)
 				for i := 0; i < chunks; i++ {
 					if _, err := c.Write(payload); err != nil {

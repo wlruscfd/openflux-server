@@ -76,7 +76,6 @@ func TestScrapeGuestIdentity(t *testing.T) {
 	if got := jsStringField(samplePage, "appDomain"); got != "my.mts-link.ru/boards" {
 		t.Errorf("appDomain = %q", got)
 	}
-	// Empty values must stay empty, not match a neighbouring key.
 	if got := jsStringField(samplePage, "boardAccessToken"); got != "" {
 		t.Errorf("boardAccessToken = %q, want empty", got)
 	}
@@ -147,7 +146,6 @@ func TestHandleViewIgnoresOwnEchoJunkAndBoardState(t *testing.T) {
 	notBase64 := `{"type":"fast","subtype":"view","data":{"sessionUID":"22222222-2222-4222-8222-222222222222","cursorPosition":{"x":"!!!not base64!!!","y":123}}}`
 	otherSubtype := `{"type":"fast","subtype":"select","data":{"sessionUID":"22222222-2222-4222-8222-222222222222","selectedGroups":[]}}`
 	notJSON := `<html>error</html>`
-	// Board state is the big one: a descResponse must never reach the JSON parser.
 	desk := `{"type":"descResponse","status":"success","data":"{\"entities\":[]}"` + strings.Repeat(`,"x":1`, 5000) + `}"`
 	users := `{"type":"boardUsersResponse","status":"success","data":{"users":[{"name":"Guest"}]}}`
 
@@ -159,8 +157,6 @@ func TestHandleViewIgnoresOwnEchoJunkAndBoardState(t *testing.T) {
 	}
 }
 
-// TestWriterLoopCoalescesIntoOneFrame is the whole point of the batching: a burst of tunnel
-// packets has to leave as a single cursor frame instead of one frame per packet.
 func TestWriterLoopCoalescesIntoOneFrame(t *testing.T) {
 	frames := make(chan []byte, 16)
 	upgrader := websocket.Upgrader{}
@@ -203,7 +199,6 @@ func TestWriterLoopCoalescesIntoOneFrame(t *testing.T) {
 		}
 	}
 
-	// Collect until every packet has been accounted for.
 	var delivered [][]byte
 	frameCount := 0
 	deadline := time.After(10 * time.Second)
@@ -246,7 +241,6 @@ collect:
 		}
 	}
 
-	// Anything still queued would mean the batching is not actually coalescing.
 	drainTimer := time.NewTimer(300 * time.Millisecond)
 drain:
 	for {
@@ -271,8 +265,6 @@ drain:
 	t.Logf("%d packets coalesced into %d cursor frames", packets, frameCount)
 }
 
-// TestFlushStashesWhileDisconnected covers the reconnect path: packets accepted while there
-// is no session must be kept and written by the next one, not dropped.
 func TestFlushStashesWhileDisconnected(t *testing.T) {
 	tr := NewTransport("", transport.DefaultConfig())
 	defer tr.Stop()
@@ -287,7 +279,6 @@ func TestFlushStashesWhileDisconnected(t *testing.T) {
 		t.Fatalf("stashed %d packets, want %d", stashed, len(pkts))
 	}
 
-	// The stash is bounded: a long outage must not turn into unbounded memory growth.
 	big := make([]byte, mtsStashBytes)
 	tr.flush([][]byte{big}, len(big))
 	tr.stashMu.Lock()

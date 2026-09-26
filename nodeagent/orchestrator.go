@@ -418,7 +418,6 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		trans = transport.NewCompressedTransport(mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig()))
 	case "mts":
-		// Unwrapped for the same reason as main.go: batches are already zstd-compressed.
 		trans = mts.NewTransport(k.DocURL, transport.DefaultConfig())
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))

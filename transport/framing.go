@@ -68,10 +68,6 @@ func EncodeBatch(pkts [][]byte) []byte {
 	return append(out, framed...)
 }
 
-// IsBatchFrame reports whether data is an EncodeBatch frame rather than a single raw tunnel
-// packet. Transports that coalesce packets on their own use this to stay readable by a peer
-// that still sends one packet per message: a raw packet is a bare IPv4/IPv6 datagram, so its
-// first byte is a version nibble (0x4x/0x6x) and can never collide with the format version.
 func IsBatchFrame(data []byte) bool {
 	return len(data) >= 2 && data[0] == batchFormatVersion
 }

@@ -135,9 +135,6 @@ func main() {
 	case "mailru":
 		trans = wrapCodec(mailru.NewMailruDocsTransport(globalDocUrl, config))
 	case "mts":
-		// No NewCompressedTransport here on purpose: the transport already zstd-compresses
-		// every batch it writes (transport.EncodeBatch), so a per-packet LZ4 pass on top would
-		// only burn CPU and copy every packet again.
 		trans = mts.NewTransport(globalDocUrl, config)
 	case "yandex_multistream":
 		urls := strings.Split(*docUrls, ",")

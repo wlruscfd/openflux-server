@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,26 +40,14 @@ const (
 	mtsHTTPTimeout   = 15 * time.Second
 	mtsMaxAttempt    = 10
 
-	// The board relays cursor frames untouched and a 60KB payload has been observed
-	// arriving intact, so batches stay well under that: one frame per burst instead of
-	// one frame per packet is where nearly all of the throughput comes from.
 	mtsDefaultBatchBytes = 48 * 1024
 	mtsDefaultBatchCount = 64
 	mtsLinger            = 2 * time.Millisecond
 
-	// mtsSendWait bounds how long Send blocks on a full queue. The tunnel ignores Send's
-	// error (tunnel/endpoint.go hands packets to a fire-and-forget callback), so returning
-	// an error here would silently drop a packet; a short wait turns a transient burst
-	// into a little latency instead of a loss the TCP stack only notices on retransmit.
 	mtsSendWait = 250 * time.Millisecond
 
-	// mtsStashBytes caps packets carried across a reconnect. gvisor retransmits what it
-	// must, so this is only a latency shortcut, and it has to stay bounded: managed mode
-	// runs one transport per key, so per-transport buffers are multiplied by the fleet size.
 	mtsStashBytes = 64 * 1024
 
-	// mtsCursorY is a constant companion to the base64 payload riding in cursorPosition.x.
-	// The board app never reads y back for guests, so it only has to look like a real sample.
 	mtsCursorY = 123.0
 )
 
@@ -88,15 +75,6 @@ type mtsSession struct {
 	sessionUID atomic.Pointer[string]
 }
 
-// Transport carries tunnel packets as MTS Link Boards "fast/view" cursor updates.
-//
-// The board is opened anonymously through a share link: the HTML page embeds a guest token,
-// a client UID and a short-lived JWT signature, so no login and no CAPTCHA is involved.
-// Every page load mints a fresh guest identity, which is what makes reconnects cheap.
-//
-// Outgoing packets are coalesced with transport.EncodeBatch and sent as one base64 cursor
-// frame; the reader accepts both a batch frame and a bare packet, so a peer that still
-// sends one packet per cursor update stays readable.
 type Transport struct {
 	*transport.BaseTransport
 
@@ -117,10 +95,7 @@ type Transport struct {
 	started atomic.Bool
 
 	batchBytes int
-
-	// slowCallback accumulates time spent inside the receive callback, for verbose diagnostics.
-	slowCallback atomic.Int64
-	batchCount   int
+	batchCount int
 
 	stashMu  sync.Mutex
 	stash    [][]byte
@@ -132,12 +107,9 @@ func NewTransport(rawURL string, config transport.TransportConfig) *Transport {
 		BaseTransport: transport.NewBaseTransport(config),
 		url:           rawURL,
 		done:          make(chan struct{}),
-		// Deliberately the configured depth and no deeper: at MTU-sized packets a queue is
-		// ~1.4MB, and nodeagent runs one of these per key. Send waits for room instead of
-		// growing the buffer.
-		out:        make(chan []byte, config.MaxQueueSize),
-		batchBytes: envInt("OPENFLUX_MTS_BATCH_BYTES", mtsDefaultBatchBytes),
-		batchCount: envInt("OPENFLUX_MTS_BATCH_COUNT", mtsDefaultBatchCount),
+		out:           make(chan []byte, config.MaxQueueSize),
+		batchBytes:    envInt("OPENFLUX_MTS_BATCH_BYTES", mtsDefaultBatchBytes),
+		batchCount:    envInt("OPENFLUX_MTS_BATCH_COUNT", mtsDefaultBatchCount),
 	}
 }
 
@@ -217,8 +189,6 @@ func (t *Transport) IsConnected() bool {
 	return t.BaseTransport.IsConnected()
 }
 
-// writerLoop is owned by the transport, not by a session, so packets accepted right before a
-// socket dies are still written after the reconnect instead of vanishing with the old session.
 func (t *Transport) writerLoop() {
 	t.started.Store(true)
 	defer t.started.Store(false)
@@ -243,8 +213,6 @@ func (t *Transport) writerLoop() {
 			add(p)
 		}
 
-		// Stashed packets from a previous connection go first: they are the oldest. Only the
-		// ones that fit this batch are taken - dropping the rest would lose them silently.
 		t.stashMu.Lock()
 		taken := 0
 		for taken < len(t.stash) && len(batch) < t.batchCount && size < t.batchBytes {
@@ -267,8 +235,6 @@ func (t *Transport) writerLoop() {
 			}
 		}
 
-		// A short linger is what actually turns a packet-per-cursor-update sender into one
-		// frame per burst; without it every isolated packet pays a full round trip alone.
 		if len(batch) < t.batchCount && size < t.batchBytes {
 			timer := time.NewTimer(mtsLinger)
 			select {
@@ -309,16 +275,11 @@ func (t *Transport) flush(batch [][]byte, size int) {
 	frame := transport.EncodeBatch(batch)
 	if err := t.sendCursor(s, frame); err != nil {
 		utils.Debugf("[MTS] cursor send: %v", err)
-		// Without this the writer keeps pulling packets and failing them one by one against a
-		// dead socket: the tunnel would see nothing but retransmits and no reconnect.
 		t.stashPackets(batch, size)
 		t.ForceReconnect()
 		return
 	}
 	t.RecordSend(size)
-	if utils.IsVerbose() {
-		utils.Debugf("[MTS->] batch packets=%d bytes=%d", len(batch), size)
-	}
 }
 
 func (t *Transport) stashPackets(batch [][]byte, size int) {
@@ -382,8 +343,6 @@ func jsBoolField(html, name string) bool {
 	return m[1] == "true"
 }
 
-// fetchGuestSession loads the share page and scrapes the anonymous guest identity out of
-// the inline baseInfo object the board app boots from.
 func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
@@ -510,8 +469,6 @@ func (t *Transport) fetchPods(client *http.Client, info mtsInfo) (podInfo, error
 	return podInfo{pod: out.Pod, reservePod: out.ReservePod}, nil
 }
 
-// connectLoop re-scrapes a fresh guest identity on every attempt. Guest tokens are cheap
-// and per-load, so a stale one is never worth reusing after a disconnect.
 func (t *Transport) connectLoop(boardUID string) {
 	attempt := 0
 	for {
@@ -534,7 +491,6 @@ func (t *Transport) connectLoop(boardUID string) {
 		}
 		t.SetConnected(false)
 		if established {
-			// A session that ran and then ended is a reconnect, no matter how clean the drop was.
 			t.RecordReconnect()
 		}
 
@@ -609,10 +565,6 @@ func (s *mtsSession) sendJSON(v map[string]interface{}) error {
 	return s.safeWrite(payload)
 }
 
-// connectAndServe tries the main pod, then the reserve pod, but only while it is still trying
-// to get a session at all. Once a session has been established its end means "reconnect", and
-// hopping to the reserve pod instead would leave the two ends on different pods, which looks
-// like a live transport that silently carries nothing. It reports whether a session ran.
 func (t *Transport) connectAndServe(attempt int, info mtsInfo) (bool, error) {
 	endpoints := []struct {
 		base  string
@@ -647,7 +599,6 @@ func (t *Transport) connectAndServe(attempt int, info mtsInfo) (bool, error) {
 
 var errMTSFatal = fmt.Errorf("mts: board rejected the session")
 
-// dialAndServe reports whether a session was actually established before it ended.
 func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) (bool, error) {
 	wsURL := fmt.Sprintf("%s/ws/%s?clientUID=%s&locale=ru", base, alias, info.clientUID)
 
@@ -661,9 +612,6 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 		NetDialContext:   transport.ProtectedDialer().DialContext,
 	}
 	utils.Debugf("[MTS] dial %s (attempt %d)", wsURL, attempt)
-	if utils.IsVerbose() {
-		utils.Debugf("[MTS] dial stack:\n%s", debug.Stack())
-	}
 	conn, resp, err := dialer.Dial(wsURL, header)
 	if err != nil {
 		status := 0
@@ -708,9 +656,6 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 	}
 }
 
-// handshake runs the exact message sequence the board app runs on load: init, deskRequest,
-// boardLoaded, boardUsersRequest. The server hands back the sessionUID every fast/view
-// message has to be stamped with, so initResponse is mandatory before anything is sent.
 func (t *Transport) handshake(sess *mtsSession) error {
 	conn := sess.Conn
 	_ = conn.SetReadDeadline(time.Now().Add(mtsDialTimeout))
@@ -785,9 +730,6 @@ func (t *Transport) awaitSession(conn *websocket.Conn) (string, error) {
 	return "", fmt.Errorf("timed out waiting for initResponse")
 }
 
-// sendCursor smuggles one already-framed payload through the multi-user cursor channel. This
-// is the channel every browser guest uses to broadcast its pointer, and MTS forwards it to
-// every other session on the board untouched.
 func (t *Transport) sendCursor(sess *mtsSession, frame []byte) error {
 	sessionUID := ""
 	if p := sess.sessionUID.Load(); p != nil {
@@ -855,8 +797,6 @@ type mtsEnvelope struct {
 }
 
 func (t *Transport) handleMessage(sess *mtsSession, raw []byte) {
-	// Every other frame on this socket is board state: a deskRequest answer can be hundreds
-	// of KB of JSON. Checking two substrings first keeps that off the JSON parser entirely.
 	if !bytes.Contains(raw, viewTypeMarker) || !bytes.Contains(raw, viewFastMarker) {
 		return
 	}
@@ -903,7 +843,6 @@ func (t *Transport) deliver(frame []byte, sender string) {
 		utils.Debugf("[MTS<-] batch from=%s packets=%d bytes=%d", shortStr(sender, 8), len(packets), len(frame))
 		return
 	}
-	// A bare packet from a peer that has not switched to batching yet.
 	t.emit(frame)
 	utils.Debugf("[MTS<-] packet from=%s bytes=%d", shortStr(sender, 8), len(frame))
 }
@@ -912,18 +851,12 @@ func (t *Transport) emit(p []byte) {
 	if len(p) == 0 {
 		return
 	}
-	start := time.Now()
 	t.RecordReceive(len(p))
 	t.onDataMu.RLock()
 	cb := t.onData
 	t.onDataMu.RUnlock()
 	if cb != nil {
 		cb(p)
-	}
-	// The read loop is the only thing draining the socket, so a slow consumer here is a
-	// stalled tunnel. Worth knowing when a board feels sluggish.
-	if utils.IsVerbose() {
-		t.slowCallback.Add(int64(time.Since(start)))
 	}
 }
 

@@ -15,10 +15,6 @@ import (
 	"universal-bypass-tool/utils"
 )
 
-// Live end-to-end check against a real MTS Link Boards share link. Opt-in, since it needs
-// internet access and a board that still accepts anonymous guests:
-//
-//	MTS_LIVE_BOARD=https://my.mts-link.ru/boards/board/<uid> go test ./transport/mts -run Live -v
 func TestLiveGuestCursorRoundTrip(t *testing.T) {
 	boardURL := os.Getenv("MTS_LIVE_BOARD")
 	if boardURL == "" {
@@ -47,8 +43,6 @@ func TestLiveGuestCursorRoundTrip(t *testing.T) {
 	payload := []byte("mts-live-round-trip-payload")
 	waitForPayload(t, sender, got, payload)
 
-	// A real tunnel packet is MTU-sized, not a few bytes: cursorPosition.x carries it
-	// base64-encoded, so every size class has to survive the board's own limits intact.
 	for _, size := range []int{200, 1400, 4000, 16000, 60000} {
 		big := makePayload(size)
 		waitForPayload(t, sender, got, big)
@@ -97,8 +91,6 @@ func commonPrefix(a, b []byte) int {
 	return n
 }
 
-// TestLiveReconnectAfterDrop kills the socket mid-session and requires the transport to come
-// back on its own and carry traffic again - the case a flaky mobile network produces.
 func TestLiveReconnectAfterDrop(t *testing.T) {
 	sender, _, got := livePair(t)
 	waitForPayload(t, sender, got, makePayload(1400))
@@ -126,13 +118,9 @@ func TestLiveReconnectAfterDrop(t *testing.T) {
 	stats := sender.Stats()
 	t.Logf("reconnected: reconnects=%d uptime=%s", stats.Reconnects, stats.Uptime.Round(time.Second))
 
-	// The other guest is still on the board, so a fresh session must find it again.
 	waitForPayload(t, sender, got, makePayload(1400))
 }
 
-// TestLiveManyGuestsOnOneBoard is the nodeagent question: managed mode runs one transport per
-// key, and keys can share a board. Every guest has to get a session, and a packet sent by one
-// guest has to reach the others.
 func TestLiveManyGuestsOnOneBoard(t *testing.T) {
 	boardURL := os.Getenv("MTS_LIVE_BOARD")
 	if boardURL == "" {
@@ -170,15 +158,11 @@ func TestLiveManyGuestsOnOneBoard(t *testing.T) {
 	}
 	t.Logf("%d/%d guests connected to the same board", count, count)
 
-	// The last guest must be visible to the first one.
 	want := makePayload(1400)
 	waitForPayload(t, guests[count-1], sinks[0], want)
 	t.Logf("guest %d -> guest 0 delivered", count-1)
 }
 
-// TestLiveSustainedRate holds a steady rate for a while instead of one burst. The board
-// throttles or drops under sustained load long before it refuses a burst, so this is the
-// shape that matters for a real tunnel.
 func TestLiveSustainedRate(t *testing.T) {
 	sender, _, got := livePair(t)
 
@@ -240,9 +224,6 @@ func TestLiveSustainedRate(t *testing.T) {
 	}
 }
 
-// TestLiveRoundTripLatency measures the per-message round trip. A board that relays cursor
-// updates with a delay would still pass every loss test while throttling any real TCP flow,
-// because the flow's window is latency-bound rather than bandwidth-bound.
 func TestLiveRoundTripLatency(t *testing.T) {
 	sender, _, got := livePair(t)
 
@@ -270,10 +251,6 @@ func TestLiveRoundTripLatency(t *testing.T) {
 		p95.Round(time.Millisecond), rtts[len(rtts)-1].Round(time.Millisecond))
 }
 
-// TestLiveOrdering is the test that matters most for TCP: the board has to relay our cursor
-// frames in the order we sent them. Out-of-order delivery looks exactly like loss to a TCP
-// stack - every reordered segment triggers a spurious retransmit - which pins the tunnel's
-// congestion window at a handful of packets no matter how fast the board relays.
 func TestLiveOrdering(t *testing.T) {
 	sender, _, got := livePair(t)
 
@@ -316,14 +293,9 @@ func TestLiveOrdering(t *testing.T) {
 	}
 }
 
-// TestLiveLatencyUnderLoad probes round-trip latency while a heavy stream is running. If the
-// board queues broadcasts under load, latency balloons exactly when throughput matters, and a
-// TCP flow's window shrinks with it.
 func TestLiveLatencyUnderLoad(t *testing.T) {
 	sender, _, got := livePair(t)
 
-	// The sink carries the load too, so a probe has to be told apart by its own marker;
-	// otherwise it just reads a backlogged load packet and reports a 0ms round trip.
 	probe := func() time.Duration {
 		marker := make([]byte, 1400)
 		copy(marker, "MTSPROBE")
@@ -364,7 +336,6 @@ func TestLiveLatencyUnderLoad(t *testing.T) {
 			}
 		}
 	}()
-	// Let the stream reach the board before probing.
 	time.Sleep(2 * time.Second)
 
 	loaded := make([]time.Duration, 0, 20)
@@ -420,17 +391,12 @@ func livePair(t *testing.T) (*Transport, *Transport, chan []byte) {
 	return sender, receiver, got
 }
 
-// TestLiveBurstDrain pushes as hard as the queue allows and measures what actually comes
-// back. Nothing here sleeps between sends: the point is the transport's ceiling, not the
-// test's pacing.
 func TestLiveBurstDrain(t *testing.T) {
 	sender, _, got := livePair(t)
 
 	const size = 1400
 	const burst = 3000
 
-	// Unique payloads: a count alone would also be satisfied by duplicates or a frame the
-	// decoder replayed, which is exactly the kind of corruption that shows up as a flaky tunnel.
 	payloads := make([][]byte, burst)
 	for i := range payloads {
 		p := makePayload(size)
@@ -492,9 +458,6 @@ func TestLiveBurstDrain(t *testing.T) {
 	}
 }
 
-// TestLiveIdleStability holds a connection open across several keepalive intervals.
-// mtsReadDeadline is 90s and the ping only goes out every 60s, so an off-by-one there
-// would show up as a reconnect every couple of minutes.
 func TestLiveIdleStability(t *testing.T) {
 	if os.Getenv("MTS_LIVE_IDLE_SECONDS") == "" {
 		t.Skip("set MTS_LIVE_IDLE_SECONDS (e.g. 200) to run the idle stability check")
