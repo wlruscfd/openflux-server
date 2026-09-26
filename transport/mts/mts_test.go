@@ -15,12 +15,18 @@ import (
 	"universal-bypass-tool/transport"
 )
 
+const (
+	sampleBoardUID  = "11111111-2222-4333-8444-555555555555"
+	sampleToken     = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	sampleClientUID = "99999999-8888-4777-8666-555544443333"
+)
+
 const samplePage = `<script type="module" defer charset="utf-8">
     const baseInfo = {
         accountId:  0 ,
         accountName: "Guest",
-        token: "7da2c6e1-d415-4c80-afdc-f0da03cae2ad",
-        boardUID: "57a1dbd3-3590-4658-942e-580dd85b0cc7",
+        token: "` + sampleToken + `",
+        boardUID: "` + sampleBoardUID + `",
         boardName: "gg",
         access: "view_mini",
         navigationMode: "trackpad",
@@ -32,7 +38,7 @@ const samplePage = `<script type="module" defer charset="utf-8">
         reserveWsDomain: "wss://wsboard2.mts-link.ru/boards",
         needPassword:  false ,
         temporary:  true ,
-        clientUID: "35d0a0b1-6a1e-4a1a-9c2f-2f0a4a6b1c33",
+        clientUID: "` + sampleClientUID + `",
         signature: "eyJhbGciOiJIUzI1NiJ9.eyJ0ZW1wb3JhbnkiOnRydWV9.sig",
     };
 </script>`
@@ -50,11 +56,11 @@ func testSession(t *testing.T) *mtsSession {
 
 func TestExtractBoardUID(t *testing.T) {
 	cases := map[string]string{
-		"https://my.mts-link.ru/boards/board/57a1dbd3-3590-4658-942e-580dd85b0cc7":     "57a1dbd3-3590-4658-942e-580dd85b0cc7",
-		"https://my.mts-link.ru/boards/board/57a1dbd3-3590-4658-942e-580dd85b0cc7/":    "57a1dbd3-3590-4658-942e-580dd85b0cc7",
-		"https://my.mts-link.ru/boards/board/57a1dbd3-3590-4658-942e-580dd85b0cc7?x=1": "57a1dbd3-3590-4658-942e-580dd85b0cc7",
-		"https://my.mts-link.ru/boards/":                                               "",
-		"":                                                                             "",
+		"https://my.mts-link.ru/boards/board/" + sampleBoardUID:          sampleBoardUID,
+		"https://my.mts-link.ru/boards/board/" + sampleBoardUID + "/":    sampleBoardUID,
+		"https://my.mts-link.ru/boards/board/" + sampleBoardUID + "?x=1": sampleBoardUID,
+		"https://my.mts-link.ru/boards/":                                 "",
+		"":                                                               "",
 	}
 	for in, want := range cases {
 		if got := extractBoardUID(in); got != want {
@@ -64,7 +70,7 @@ func TestExtractBoardUID(t *testing.T) {
 }
 
 func TestScrapeGuestIdentity(t *testing.T) {
-	if got := jsStringField(samplePage, "token"); got != "7da2c6e1-d415-4c80-afdc-f0da03cae2ad" {
+	if got := jsStringField(samplePage, "token"); got != sampleToken {
 		t.Errorf("token = %q", got)
 	}
 	if got := jsStringField(samplePage, "wsDomain"); got != "wss://wsboard.mts-link.ru/boards" {
