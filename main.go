@@ -17,6 +17,7 @@ import (
 	"universal-bypass-tool/transport"
 	"universal-bypass-tool/transport/cupsonline"
 	"universal-bypass-tool/transport/mailru"
+	"universal-bypass-tool/transport/mts"
 	"universal-bypass-tool/transport/oneme"
 	"universal-bypass-tool/transport/yandex"
 	"universal-bypass-tool/tunnel"
@@ -36,7 +37,7 @@ func main() {
 	client := flag.Bool("client", false, "Run as client")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	socksAddr := flag.String("socks5", ":1080", "SOCKS5 address")
-	transportType := flag.String("transport", "yandex", "Transport type (yandex, volga, oneme, yandex_multistream, cupsonline, mailru, boards)")
+	transportType := flag.String("transport", "yandex", "Transport type (yandex, volga, oneme, yandex_multistream, cupsonline, mailru, boards, mts)")
 	managed := flag.Bool("managed", false, "Exit node only: fetch active keys from a controlplane instance instead of a single --url")
 	controlURL := flag.String("control-url", "", "Managed mode: base URL of the openflux-control service")
 	nodeToken := flag.String("node-token", "", "Managed mode: this node's bearer token from controlplane")
@@ -133,6 +134,11 @@ func main() {
 		trans = wrapCodec(cupsonline.NewCupsonlineTransport(globalDocUrl, config, !*exitNode))
 	case "mailru":
 		trans = wrapCodec(mailru.NewMailruDocsTransport(globalDocUrl, config))
+	case "mts":
+		// No NewCompressedTransport here on purpose: the transport already zstd-compresses
+		// every batch it writes (transport.EncodeBatch), so a per-packet LZ4 pass on top would
+		// only burn CPU and copy every packet again.
+		trans = mts.NewTransport(globalDocUrl, config)
 	case "yandex_multistream":
 		urls := strings.Split(*docUrls, ",")
 		if len(urls) < 2 {

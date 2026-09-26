@@ -13,6 +13,7 @@ import (
 
 	"universal-bypass-tool/transport"
 	"universal-bypass-tool/transport/mailru"
+	"universal-bypass-tool/transport/mts"
 	"universal-bypass-tool/transport/yandex"
 	"universal-bypass-tool/tunnel"
 	"universal-bypass-tool/utils"
@@ -26,7 +27,7 @@ type Config struct {
 	HeartbeatPeriod time.Duration
 	ExitMode        tunnel.ExitMode
 	// PortRangeSize: raw mode's outbound ports per key - trades keys-per-node against connections-per-key; 0 = DefaultPortRangeSize.
-	PortRangeSize int
+	PortRangeSize    int
 	CaptchaSolveMode yandex.CaptchaSolveMode
 }
 
@@ -202,8 +203,8 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
-		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" {
-			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru transports today", id)
+		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" && k.Transport != "mts" {
+			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts transports today", id)
 			continue
 		}
 		if k.Transport == "yandex_multistream" && len(k.DocURLs) < 2 {
@@ -416,6 +417,9 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			return nil, fmt.Errorf("key %s: mailru transport doesn't support e2e_encryption yet", k.ID)
 		}
 		trans = transport.NewCompressedTransport(mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig()))
+	case "mts":
+		// Unwrapped for the same reason as main.go: batches are already zstd-compressed.
+		trans = mts.NewTransport(k.DocURL, transport.DefaultConfig())
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
