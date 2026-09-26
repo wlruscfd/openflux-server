@@ -336,6 +336,7 @@
 					<option value="yandex_multistream">yandex_multistream</option>
 					<option value="boards">boards</option>
 					<option value="mailru">mailru</option>
+					<option value="mts">mts</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>
