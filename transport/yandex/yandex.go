@@ -69,6 +69,10 @@ var errCaptchaBlocked = errors.New("captcha or bot-check page returned instead o
 // captchaCooldown is a floor under the usual attempt-scaled backoff for captcha failures.
 const captchaCooldown = 3 * time.Minute
 
+// cookieRetryFloor applies when a fresh jar arrives mid-fetch: worth retrying promptly, but
+// never with a zero wait, or a client re-pushing the same unsolved jar spins the transport.
+const cookieRetryFloor = 5 * time.Second
+
 type YandexDocsInfo struct {
 	CookieStr   string
 	Token       string
@@ -172,11 +176,36 @@ func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
 // ProvideCookies feeds a solved session's cookies into subsequent fetches and forces a reconnect.
 func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.Mu.Lock()
+	if cookieStr == t.providedCookies {
+		t.Mu.Unlock()
+		t.debugf("ignoring repeated push of the same %d cookie bytes", len(cookieStr))
+		return
+	}
 	t.providedCookies = cookieStr
 	t.Mu.Unlock()
 	t.captchaCookieGeneration.Add(1)
 	t.debugf("received %d bytes of externally-solved cookies, forcing a reconnect", len(cookieStr))
 	t.ForceReconnect()
+}
+
+// solveCaptchaIsolated keeps the proof-of-work solver off the live jar. The solver's own
+// Set-Cookie responses otherwise overwrite an externally-solved session, so a good jar
+// stops working after the first captcha attempt and the client re-pushes it forever.
+func solveCaptchaIsolated(docURL string, jar http.CookieJar, userAgent string, rt http.RoundTripper) error {
+	temp, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	parsed, err := neturl.Parse(docURL)
+	if err != nil {
+		return err
+	}
+	temp.SetCookies(parsed, jar.Cookies(parsed))
+	if _, err := solveCaptcha(docURL, temp, userAgent, rt); err != nil {
+		return err
+	}
+	jar.SetCookies(parsed, temp.Cookies(parsed))
+	return nil
 }
 
 func (t *YandexDocsTransport) getProvidedCookies() string {
@@ -331,8 +360,8 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 			t.debugf("fetchDocInfo failed: %v", err)
 			if errors.Is(err, errCaptchaBlocked) {
 				if t.captchaCookieGeneration.Load() != cookieGeneration {
-					t.debugf("captcha cookies changed during fetch, retrying without cooldown")
-					t.scheduleReconnect(attempt, reasonCaptchaBlocked, err)
+					t.debugf("captcha cookies changed during fetch, retrying soon")
+					t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, cookieRetryFloor)
 					return
 				}
 				if t.captchaSolveMode == CaptchaSolveModeHeadlessBrowser {
@@ -1003,7 +1032,7 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 		if t.captchaSolveMode != CaptchaSolveModeNative {
 			return errCaptchaBlocked
 		}
-		if _, cerr := solveCaptcha(currentURL, jar, browserUserAgent, client.Transport); cerr != nil {
+		if cerr := solveCaptchaIsolated(currentURL, jar, browserUserAgent, client.Transport); cerr != nil {
 			t.debugf("PoW captcha solve failed: %v", cerr)
 			return fmt.Errorf("%w: %v", errCaptchaBlocked, cerr)
 		}

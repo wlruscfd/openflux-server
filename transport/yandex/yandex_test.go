@@ -950,6 +950,25 @@ func TestScheduleReconnectStripsNewlinesFromCause(t *testing.T) {
 	}
 }
 
+func TestProvideCookiesIgnoresIdenticalJar(t *testing.T) {
+	tr := NewYandexDocsTransport("http://unused.invalid", transport.DefaultConfig())
+	tr.BaseTransport.Start()
+	defer tr.Stop()
+
+	tr.ProvideCookies("a=1; b=2")
+	afterFirst := tr.captchaCookieGeneration.Load()
+
+	tr.ProvideCookies("a=1; b=2")
+	if got := tr.captchaCookieGeneration.Load(); got != afterFirst {
+		t.Errorf("generation = %d after a repeated identical push, want %d - a no-op push must not force a reconnect", got, afterFirst)
+	}
+
+	tr.ProvideCookies("a=1; b=3")
+	if got := tr.captchaCookieGeneration.Load(); got == afterFirst {
+		t.Error("generation unchanged after a genuinely different jar")
+	}
+}
+
 func TestCaptchaCooldownSurvivesForceReconnect(t *testing.T) {
 	// A solved-captcha cookie push calls ForceReconnect. If that can close the backoff
 	// wake channel for a captcha failure, the cooldown is skipped and the captcha prompt
