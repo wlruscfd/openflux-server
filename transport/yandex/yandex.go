@@ -903,7 +903,7 @@ func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonC
 	}
 	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
 	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", attempt+1, int(delay.Seconds()), reasonCode, causeText))
-	if delay > 0 {
+	if delay > 0 && minDelay == 0 {
 		wake := make(chan struct{})
 		t.Mu.Lock()
 		t.wakeReconnect = wake

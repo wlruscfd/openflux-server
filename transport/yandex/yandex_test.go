@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -947,6 +948,55 @@ func TestScheduleReconnectStripsNewlinesFromCause(t *testing.T) {
 	if strings.Contains(gotDetail, "\n") {
 		t.Errorf("detail = %q, should not contain a literal newline", gotDetail)
 	}
+}
+
+func TestCaptchaCooldownSurvivesForceReconnect(t *testing.T) {
+	// A solved-captcha cookie push calls ForceReconnect. If that can close the backoff
+	// wake channel for a captcha failure, the cooldown is skipped and the captcha prompt
+	// re-opens on every retry (~1s) instead of every 3 minutes.
+	assertNoWakeChannel := func(t *testing.T, minDelay time.Duration) {
+		t.Helper()
+		tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
+			ReconnectDelay:       time.Millisecond,
+			ReconnectMultiplier:  1,
+			MaxReconnectAttempts: 999,
+		})
+		tr.BaseTransport.Start()
+		defer tr.Stop()
+
+		retrying := make(chan struct{})
+		var once sync.Once
+		tr.SetEventCallback(func(code, detail string) {
+			if code == transport.EventRetrying {
+				once.Do(func() { close(retrying) })
+			}
+		})
+
+		go tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), minDelay)
+		select {
+		case <-retrying:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no retrying event")
+		}
+
+		tr.Mu.Lock()
+		wake := tr.wakeReconnect
+		tr.Mu.Unlock()
+
+		if minDelay > 0 && wake != nil {
+			t.Error("captcha retry registered a wake channel, so ForceReconnect can cut the cooldown short")
+		}
+		if minDelay == 0 && wake == nil {
+			t.Error("plain backoff registered no wake channel, so ForceReconnect cannot cut it short")
+		}
+	}
+
+	t.Run("cooldown floor is not interruptible", func(t *testing.T) {
+		assertNoWakeChannel(t, captchaCooldown)
+	})
+	t.Run("plain backoff stays interruptible", func(t *testing.T) {
+		assertNoWakeChannel(t, 0)
+	})
 }
 
 func TestScheduleReconnectDoesNothingWhenNotRunning(t *testing.T) {
