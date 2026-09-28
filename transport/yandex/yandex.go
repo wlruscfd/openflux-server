@@ -2,6 +2,7 @@ package yandex
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -188,6 +189,9 @@ func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.providedCookies = normalized
 	t.Mu.Unlock()
 
+	sum := sha256.Sum256([]byte(normalized))
+	t.debugf("pushed cookie jar: %d bytes, sha256 %x", len(normalized), sum[:6])
+
 	t.captchaCookieGeneration.Add(1)
 	// The client re-solves on every poll and its jar churns between attempts, so cutting the
 	// wait short every time turns one solved captcha into a hot loop. One push may cut the wait
@@ -207,18 +211,16 @@ func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.ForceReconnect()
 }
 
-// cookieNames lists only the names in a Cookie header: enough to tell "the jar arrived" from
-// "the jar arrived but is missing the session cookie" without logging secret values.
-func cookieNames(header string) string {
-	if header == "" {
+// cookieNames lists only the names of the cookies a jar would send for a URL: enough to tell
+// "the jar arrived" from "the jar arrived but is missing the session cookie" without logging
+// secret values.
+func cookieNames(cookies []*http.Cookie) string {
+	if len(cookies) == 0 {
 		return "(none)"
 	}
-	parts := strings.Split(header, ";")
-	names := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if i := strings.Index(p, "="); i > 0 {
-			names = append(names, strings.TrimSpace(p[:i]))
-		}
+	names := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		names = append(names, c.Name)
 	}
 	return strings.Join(names, ",")
 }
@@ -1119,8 +1121,8 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	for hop := 0; hop < 10; hop++ {
 		req, _ := http.NewRequest("GET", currentURL, nil)
 		applyBrowserGetHeaders(req.Header)
-		sent := cookieNames(req.Header.Get("Cookie"))
-		t.debugf("hop %d GET %s (cookies: %s)", hop, shortURL(currentURL), sent)
+		sent := cookieNames(jar.Cookies(req.URL))
+		t.debugf("hop %d GET %s (jar cookies: %s)", hop, shortURL(currentURL), sent)
 		var err error
 		resp, err = client.Do(req)
 		if err != nil {
