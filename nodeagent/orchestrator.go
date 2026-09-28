@@ -528,7 +528,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		trans = transport.NewCompressedTransport(mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig()))
 	case "mts":
-		trans = transport.NewCompressedTransport(mts.NewTransport(k.DocURL, transport.DefaultConfig()))
+		trans = newMTSExitTransport(k.DocURL)
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
@@ -561,6 +561,15 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		docURLs:       append([]string(nil), k.DocURLs...),
 		e2e:           k.E2EEncryption,
 	}, nil
+}
+
+// newMTSExitTransport must mirror how the client builds its mts transport in mobile.wrapGeneric.
+// The client wraps mts in a CompressedTransport, which prefixes each packet with a marker byte;
+// an exit that skips the wrapper receives every packet with that marker still attached, so the
+// IPv4 header lands at offset 1 and the tunnel discards it without an error. mts was silently
+// one-way until this was matched.
+func newMTSExitTransport(docURL string) transport.Transport {
+	return transport.NewCompressedTransport(mts.NewTransport(docURL, transport.DefaultConfig()))
 }
 
 func (o *Orchestrator) stopWorker(w *worker) {

@@ -827,14 +827,20 @@ func (t *Transport) sendCursor(sess *mtsSession, frame []byte) error {
 	if sessionUID == "" {
 		return fmt.Errorf("no sessionUID")
 	}
-	return sess.sendJSON(map[string]interface{}{
+	return sess.sendJSON(buildCursorMessage(sessionUID, sess.Info.guestName, sess.Info.token, frame))
+}
+
+// buildCursorMessage is the exact shape the board relays. Sender and receiver both go through it
+// so a change on one side cannot silently diverge from the other.
+func buildCursorMessage(sessionUID, guestName, token string, frame []byte) map[string]interface{} {
+	return map[string]interface{}{
 		"type":    "fast",
 		"subtype": "view",
 		"data": map[string]interface{}{
 			"sessionUID": sessionUID,
-			"name":       sess.Info.guestName,
+			"name":       guestName,
 			"login":      "",
-			"token":      sess.Info.token,
+			"token":      token,
 			"cursorPosition": map[string]interface{}{
 				"x": base64.StdEncoding.EncodeToString(frame),
 				"y": mtsCursorY,
@@ -846,7 +852,7 @@ func (t *Transport) sendCursor(sess *mtsSession, frame []byte) error {
 				"viewportHeight": 720,
 			},
 		},
-	})
+	}
 }
 
 func (t *Transport) pingLoop(sess *mtsSession, stop chan struct{}) {
@@ -886,29 +892,11 @@ type mtsEnvelope struct {
 }
 
 func (t *Transport) handleMessage(sess *mtsSession, raw []byte) {
-	if !bytes.Contains(raw, viewTypeMarker) || !bytes.Contains(raw, viewFastMarker) {
+	encoded, sender, ok := parseCursorPayload(raw)
+	if !ok {
 		return
-	}
-	var env mtsEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return
-	}
-	if env.Type != "fast" || env.Subtype != "view" {
-		return
-	}
-
-	sender := env.Data.SessionUID
-	if sender == "" {
-		sender = env.SessionUID
 	}
 	if mine := sess.sessionUID.Load(); mine != nil && sender == *mine {
-		return
-	}
-	if len(env.Data.CursorPosition.X) == 0 {
-		return
-	}
-	var encoded string
-	if err := json.Unmarshal(env.Data.CursorPosition.X, &encoded); err != nil || encoded == "" {
 		return
 	}
 	frame, err := base64.StdEncoding.DecodeString(encoded)
@@ -917,6 +905,60 @@ func (t *Transport) handleMessage(sess *mtsSession, raw []byte) {
 	}
 
 	t.deliver(frame, sender)
+}
+
+// parseCursorPayload pulls the base64 payload and its sender out of a board message, rejecting
+// anything that is not a fast/view cursor update. Kept separate from handleMessage so the
+// receive path can be exercised against real sender output.
+func parseCursorPayload(raw []byte) (encoded, sender string, ok bool) {
+	if !bytes.Contains(raw, viewTypeMarker) || !bytes.Contains(raw, viewFastMarker) {
+		return "", "", false
+	}
+	var env mtsEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", "", false
+	}
+	if env.Type != "fast" || env.Subtype != "view" {
+		return "", "", false
+	}
+	if len(env.Data.CursorPosition.X) == 0 {
+		return "", "", false
+	}
+	if err := json.Unmarshal(env.Data.CursorPosition.X, &encoded); err != nil || encoded == "" {
+		return "", "", false
+	}
+	sender = env.Data.SessionUID
+	if sender == "" {
+		sender = env.SessionUID
+	}
+	return encoded, sender, true
+}
+
+// decodeCursorFrame reverses the sender side of the wire: the base64 is unwrapped, an exit that
+// expects compressed frames decompresses it, and a batch frame is expanded back into packets.
+// A frame the exit cannot interpret is an error rather than a corrupt packet handed onwards.
+func decodeCursorFrame(encoded string, expectCompressed bool) ([][]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base64: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty frame")
+	}
+	if expectCompressed {
+		raw, err = transport.Decompress(raw)
+		if err != nil {
+			return nil, fmt.Errorf("decompress: %w", err)
+		}
+	}
+	if !transport.IsBatchFrame(raw) {
+		return [][]byte{raw}, nil
+	}
+	packets, err := transport.DecodeBatch(raw)
+	if err != nil {
+		return nil, fmt.Errorf("batch: %w", err)
+	}
+	return packets, nil
 }
 
 func (t *Transport) deliver(frame []byte, sender string) {
