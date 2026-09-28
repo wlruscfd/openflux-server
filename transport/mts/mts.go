@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	mrand "math/rand"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -652,7 +653,13 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: mtsDialTimeout,
-		NetDialContext:   transport.ProtectedDialer().DialContext,
+		// permessage-deflate is negotiated, not assumed: the cursor payload is base64 inside
+		// JSON, so the framing overhead around it is compressible even when the packet bytes
+		// themselves are not.
+		EnableCompression: true,
+		WriteBufferSize:   64 * 1024,
+		ReadBufferSize:    64 * 1024,
+		NetDialContext:    transport.ProtectedDialer().DialContext,
 	}
 	utils.Debugf("[MTS] dial %s (attempt %d)", wsURL, attempt)
 	conn, resp, err := dialer.Dial(wsURL, header)
@@ -664,6 +671,14 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 		return false, fmt.Errorf("dial %s (http %d): %w", wsURL, status, err)
 	}
 	utils.Debugf("[MTS] WS connected: %s pod=%s", base, alias)
+
+	// The tunnel writes one cursor message per batch, often small and bursty. Nagle would hold
+	// them back waiting for more data, adding a round trip to every flush.
+	if tcpConn, ok := conn.NetConn().(*net.TCPConn); ok {
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			utils.Debugf("[MTS] set TCP_NODELAY: %v", err)
+		}
+	}
 
 	sess := &mtsSession{Info: info, Conn: conn}
 	t.session.Store(sess)
