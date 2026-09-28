@@ -141,6 +141,7 @@ type YandexDocsTransport struct {
 
 	// providedCookies is set via ProvideCookies and resent on every future fetch.
 	providedCookies         string
+	cookieCutPending        bool
 	captchaCookieGeneration atomic.Uint64
 
 	captchaSolveMode CaptchaSolveMode
@@ -177,6 +178,7 @@ func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
 // ProvideCookies feeds a solved session's cookies into subsequent fetches and forces a reconnect.
 func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	normalized := normalizeCookieHeader(cookieStr)
+
 	t.Mu.Lock()
 	if normalized == t.providedCookies {
 		t.Mu.Unlock()
@@ -185,7 +187,22 @@ func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	}
 	t.providedCookies = normalized
 	t.Mu.Unlock()
+
 	t.captchaCookieGeneration.Add(1)
+	// The client re-solves on every poll and its jar churns between attempts, so cutting the
+	// wait short every time turns one solved captcha into a hot loop. One push may cut the wait
+	// per retry episode; the rest are stored and picked up by the next scheduled attempt.
+	t.Mu.Lock()
+	cut := !t.cookieCutPending
+	if cut {
+		t.cookieCutPending = true
+	}
+	t.Mu.Unlock()
+
+	if !cut {
+		t.debugf("new %d byte cookie jar, applying it on the next retry window", len(cookieStr))
+		return
+	}
 	t.debugf("received %d bytes of externally-solved cookies, forcing a reconnect", len(cookieStr))
 	t.ForceReconnect()
 }
@@ -958,15 +975,22 @@ func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonC
 		t.wakeReconnect = wake
 		t.Mu.Unlock()
 
+		cutShort := false
 		select {
 		case <-time.After(delay):
 		case <-wake:
+			cutShort = true
 			t.debugf("backoff wait cut short by ForceReconnect")
 		}
 
 		t.Mu.Lock()
 		if t.wakeReconnect == wake {
 			t.wakeReconnect = nil
+		}
+		// Only a cooldown that actually elapsed earns the next cookie-driven cut, otherwise a
+		// cut would clear its own budget and the client could drive one retry per push again.
+		if !cutShort {
+			t.cookieCutPending = false
 		}
 		t.Mu.Unlock()
 	}

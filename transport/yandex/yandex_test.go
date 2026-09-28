@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1021,10 +1022,9 @@ func TestCaptchaCooldownHonoursUnchangedCookiePushes(t *testing.T) {
 	}
 }
 
-func TestCaptchaCooldownIsCutShortByNewCookieJar(t *testing.T) {
-	// A genuinely solved captcha must take effect at once, not after the full cooldown.
-	const minDelay = 10 * time.Second
-
+func TestChurningCookiePushesCannotHotLoop(t *testing.T) {
+	// The jar keeps changing between polls, so comparing contents is not enough on its own.
+	// A long cooldown must survive 40 churning pushes without being cut short a second time.
 	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
 		ReconnectDelay:       time.Millisecond,
 		ReconnectMultiplier:  1,
@@ -1033,7 +1033,42 @@ func TestCaptchaCooldownIsCutShortByNewCookieJar(t *testing.T) {
 	tr.BaseTransport.Start()
 	defer tr.Stop()
 
-	tr.ProvideCookies("a=1")
+	// The first solved jar spends the cut budget. Everything after it, however much the jar
+	// churns, must leave a long cooldown alone.
+	tr.ProvideCookies("a=1; solved=1")
+
+	returned := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), time.Hour)
+		returned <- time.Since(start)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < 40; i++ {
+		tr.ProvideCookies(fmt.Sprintf("a=1; nonce=%d", i))
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	select {
+	case took := <-returned:
+		t.Errorf("wait ended after %v - churning cookie pushes cut the cooldown short repeatedly", took)
+	case <-time.After(600 * time.Millisecond):
+	}
+	tr.Stop()
+}
+
+func TestCaptchaCooldownIsCutShortByFirstNewCookieJar(t *testing.T) {
+	// A genuinely solved captcha must take effect at once, not after the full cooldown.
+	const minDelay = time.Hour
+
+	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
+		ReconnectDelay:       time.Millisecond,
+		ReconnectMultiplier:  1,
+		MaxReconnectAttempts: 999,
+	})
+	tr.BaseTransport.Start()
+	defer tr.Stop()
 
 	var once sync.Once
 	tr.SetEventCallback(func(code, detail string) {
@@ -1050,15 +1085,64 @@ func TestCaptchaCooldownIsCutShortByNewCookieJar(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	tr.ProvideCookies("a=2; b=9")
+	tr.ProvideCookies("a=1; solved=1")
 
 	select {
 	case took := <-returned:
 		if took > 3*time.Second {
-			t.Errorf("waited %v after a new jar arrived, want it applied promptly", took)
+			t.Errorf("waited %v after a solved jar arrived, want it applied promptly", took)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("scheduleReconnectWithMinDelay never returned")
+		t.Fatal("a solved cookie jar did not cut the cooldown short")
+	}
+}
+
+func TestCookieCutBudgetReturnsAfterCooldownElapses(t *testing.T) {
+	// After a cooldown actually elapses the next solve must be able to apply again, so one
+	// cut does not permanently disable the push path.
+	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
+		ReconnectDelay:       time.Millisecond,
+		ReconnectMultiplier:  1,
+		MaxReconnectAttempts: 999,
+	})
+	tr.BaseTransport.Start()
+	defer tr.Stop()
+
+	var once sync.Once
+	tr.SetEventCallback(func(code, detail string) {
+		if code == transport.EventRetrying {
+			once.Do(func() { tr.Stop() })
+		}
+	})
+
+	// A cooldown that runs its course is what earns the next cut budget.
+	first := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), 150*time.Millisecond)
+		first <- time.Since(start)
+	}()
+	if took := <-first; took < 150*time.Millisecond {
+		t.Fatalf("first cooldown took %v, want it to run its full course", took)
+	}
+
+	tr.BaseTransport.Start()
+	second := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), time.Hour)
+		second <- time.Since(start)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	tr.ProvideCookies("a=1; solved=2")
+	select {
+	case took := <-second:
+		if took > 3*time.Second {
+			t.Errorf("second wait took %v, want the next solved jar to apply promptly", took)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a second solved jar never applied - the cut budget never reset")
 	}
 }
 
