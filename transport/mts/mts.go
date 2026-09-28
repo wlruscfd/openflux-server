@@ -42,7 +42,6 @@ const (
 
 	mtsDefaultBatchBytes = 48 * 1024
 	mtsDefaultBatchCount = 64
-	mtsLinger            = 2 * time.Millisecond
 
 	mtsSendWait = 250 * time.Millisecond
 
@@ -50,6 +49,11 @@ const (
 
 	mtsCursorY = 123.0
 )
+
+// The linger is the only knob that decides how many packets ride in one board message.
+// Measured under load it left batches at ~6 packets, so the board was being asked for ten times
+// more messages than the payload needed.
+var mtsLinger = envDurationMs("OPENFLUX_MTS_LINGER_MS", 20)
 
 type mtsInfo struct {
 	boardUID   string
@@ -137,6 +141,15 @@ func envInt(name string, def int) int {
 		}
 	}
 	return def
+}
+
+func envDurationMs(name string, def int) time.Duration {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return time.Duration(def) * time.Millisecond
 }
 
 func (t *Transport) Start() error {
