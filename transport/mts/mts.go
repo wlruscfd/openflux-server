@@ -109,6 +109,8 @@ type Transport struct {
 	// Opt-in packet tracing, enabled while the mts wire format is being diagnosed.
 	tracePackets atomic.Bool
 
+	stats flushStats
+
 	batchBytes int
 	batchCount int
 
@@ -299,8 +301,38 @@ func (t *Transport) writerLoop() {
 			continue
 		}
 		t.flush(batch, size)
+		t.recordFlush(len(batch), size)
 		reset()
 	}
+}
+
+// flushStats accumulates what the board is actually being asked to carry, so a throughput
+// problem can be told apart from a packing one: a low packets-per-message figure means the cost
+// is per message, not per byte.
+type flushStats struct {
+	messages   atomic.Uint64
+	packets    atomic.Uint64
+	bytes      atomic.Uint64
+	lastReport atomic.Int64
+}
+
+func (t *Transport) recordFlush(packets, size int) {
+	s := &t.stats
+	s.messages.Add(1)
+	s.packets.Add(uint64(packets))
+	s.bytes.Add(uint64(size))
+
+	now := time.Now().Unix()
+	prev := s.lastReport.Load()
+	if now-prev < 10 || !s.lastReport.CompareAndSwap(prev, now) {
+		return
+	}
+	m, p, b := s.messages.Swap(0), s.packets.Swap(0), s.bytes.Swap(0)
+	if m == 0 {
+		return
+	}
+	utils.Debugf("[MTS-STATS] %d msg/s, %.2f packets/msg, %.1f KB/s",
+		m/10, float64(p)/float64(m), float64(b)/10/1024)
 }
 
 func (t *Transport) flush(batch [][]byte, size int) {
