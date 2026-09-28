@@ -365,7 +365,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapGeneric(mts.NewTransport(cfg.DocURL, transportConfig), cfg), nil
+		mtsTrans := mts.NewTransport(cfg.DocURL, transportConfig)
+		mtsTrans.SetPacketTrace(true)
+		return wrapGeneric(mtsTrans, cfg), nil
 	case "yandex_multistream":
 		if len(cfg.DocURLs) < 2 {
 			return nil, fmt.Errorf("yandex_multistream requires at least 2 doc_urls")

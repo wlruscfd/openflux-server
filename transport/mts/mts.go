@@ -106,6 +106,9 @@ type Transport struct {
 	out     chan []byte
 	started atomic.Bool
 
+	// Opt-in packet tracing, enabled while the mts wire format is being diagnosed.
+	tracePackets atomic.Bool
+
 	batchBytes int
 	batchCount int
 
@@ -173,12 +176,34 @@ func (t *Transport) ForceReconnect() {
 	}
 }
 
+// SetPacketTrace enables verbose per-packet logging of what this side hands to the board.
+func (t *Transport) SetPacketTrace(on bool) {
+	t.tracePackets.Store(on)
+}
+
+func mtsHex(b []byte, n int) string {
+	if len(b) < n {
+		n = len(b)
+	}
+	if n == 0 {
+		return "(empty)"
+	}
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&sb, "%02x ", b[i])
+	}
+	return strings.TrimSpace(sb.String())
+}
+
 func (t *Transport) Send(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
 	cp := make([]byte, len(data))
 	copy(cp, data)
+	if t.tracePackets.Load() {
+		utils.Debugf("[MTS-SEND] %d bytes | head=%s", len(cp), mtsHex(cp, 24))
+	}
 	timer := time.NewTimer(mtsSendWait)
 	defer timer.Stop()
 	select {
@@ -285,6 +310,10 @@ func (t *Transport) flush(batch [][]byte, size int) {
 		return
 	}
 	frame := transport.EncodeBatch(batch)
+	if t.tracePackets.Load() {
+		utils.Debugf("[MTS-FRAME] %d bytes packets=%d | frame=%s pkt0=%s",
+			len(frame), len(batch), mtsHex(frame, 24), mtsHex(batch[0], 24))
+	}
 	if err := t.sendCursor(s, frame); err != nil {
 		utils.Debugf("[MTS] cursor send: %v", err)
 		t.stashPackets(batch, size)

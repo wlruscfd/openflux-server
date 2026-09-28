@@ -545,6 +545,9 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		return nil, err
 	}
+	if mt, ok := trans.(*mts.Transport); ok && k.Transport == "mts" {
+		mt.SetPacketTrace(true)
+	}
 	tun := tunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
 	if k.Transport == "mts" {
 		tun.SetPacketTrace(true)
