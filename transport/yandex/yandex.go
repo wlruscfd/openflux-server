@@ -1077,7 +1077,16 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	jar, _ := cookiejar.New(nil)
 	if parsed, err := neturl.Parse(url); err == nil {
 		if provided := t.getProvidedCookies(); provided != "" {
-			jar.SetCookies(parsed, parseCookieHeader(provided))
+			// Without an explicit root path the jar scopes every cookie to the directory of the
+			// requested URL. A /i/ share link then sends the whole jar to /i/... but drops the
+			// session cookies on the /edit/d/... redirect, which is answered with a captcha.
+			cookies := parseCookieHeader(provided)
+			for _, c := range cookies {
+				if c.Path == "" {
+					c.Path = "/"
+				}
+			}
+			jar.SetCookies(parsed, cookies)
 		}
 	}
 

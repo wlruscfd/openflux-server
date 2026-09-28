@@ -951,6 +951,42 @@ func TestScheduleReconnectStripsNewlinesFromCause(t *testing.T) {
 	}
 }
 
+func TestProvidedCookiesSurviveShareLinkRedirect(t *testing.T) {
+	// A /i/ share link redirects to /edit/d/... . Without a root cookie path the jar scopes the
+	// session cookies to /i and the redirect hop goes out nearly anonymous, which Yandex
+	// answers with a captcha instead of the document.
+	var gotSecondHop []*http.Cookie
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/i/doc", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/edit/d/real?from_public=1", http.StatusFound)
+	})
+	mux.HandleFunc("/edit/d/real", func(w http.ResponseWriter, r *http.Request) {
+		gotSecondHop = parseCookieHeader(r.Header.Get("Cookie"))
+		w.Write([]byte(`<script type="application/json" id="client-config">{"officeActionData":{}}</script>`))
+	})
+
+	tr := NewYandexDocsTransport(srv.URL+"/i/doc", transport.DefaultConfig())
+	tr.ProvideCookies("i=session; yandexuid=42; yashr=7")
+
+	tr.fetchDocInfo(srv.URL+"/i/doc", "user1")
+
+	if gotSecondHop == nil {
+		t.Fatal("the redirect hop never happened")
+	}
+	names := map[string]bool{}
+	for _, c := range gotSecondHop {
+		names[c.Name] = true
+	}
+	for _, want := range []string{"i", "yandexuid", "yashr"} {
+		if !names[want] {
+			t.Errorf("cookie %q missing on the redirect hop, got %v", want, names)
+		}
+	}
+}
+
 func TestProvideCookiesIgnoresIdenticalJar(t *testing.T) {
 	tr := NewYandexDocsTransport("http://unused.invalid", transport.DefaultConfig())
 	tr.BaseTransport.Start()
