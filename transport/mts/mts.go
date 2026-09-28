@@ -51,9 +51,10 @@ const (
 )
 
 // The linger is the only knob that decides how many packets ride in one board message.
-// Measured under load it left batches at ~6 packets, so the board was being asked for ten times
-// more messages than the payload needed.
-var mtsLinger = envDurationMs("OPENFLUX_MTS_LINGER_MS", 20)
+// Measured at 20ms it moved neither the transport rate (2024 vs 2048 KB/s on the same live
+// test) nor the end-to-end throughput, so per-message overhead is not the limiter here. Kept
+// tunable, but left at the low-latency default.
+var mtsLinger = envDurationMs("OPENFLUX_MTS_LINGER_MS", 2)
 
 type mtsInfo struct {
 	boardUID   string
