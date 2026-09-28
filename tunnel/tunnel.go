@@ -70,6 +70,20 @@ func (t *TCPTunnel) SetPacketTrace(on bool) {
 	t.tracePackets.Store(on)
 }
 
+// hexHead dumps the first bytes of a packet verbatim. ParsePacketInfo can only report what it
+// decodes, so a header that is shifted or misaligned looks like plausible-but-wrong addresses;
+// the raw bytes are what actually settle where the corruption starts.
+func hexHead(data []byte) string {
+	n := len(data)
+	if n > 24 {
+		n = 24
+	}
+	if n == 0 {
+		return "(empty)"
+	}
+	return fmt.Sprintf("% x", data[:n])
+}
+
 func NewTCPTunnel(trans transport.Transport, isExitNode bool) *TCPTunnel {
 	return NewTCPTunnelMode(trans, isExitNode, ExitModeRaw)
 }
@@ -135,7 +149,7 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 
 	trans.Receive(func(data []byte) {
 		if t.tracePackets.Load() {
-			utils.Debugf("[TUNNEL<-] %d bytes - %s", len(data), network.ParsePacketInfo(data))
+			utils.Debugf("[TUNNEL<-] %d bytes - %s | head=%s", len(data), network.ParsePacketInfo(data), hexHead(data))
 		}
 		tunnelEP.InjectInbound(data)
 	})
