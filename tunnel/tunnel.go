@@ -59,6 +59,14 @@ type TCPTunnel struct {
 	startTime   time.Time
 	packetCount atomic.Uint64
 	stopStats   chan struct{}
+
+	// Per-packet logging is far too noisy across the hundreds of workers one node runs, so it
+	// is opt-in per worker while a transport path is being diagnosed.
+	tracePackets atomic.Bool
+}
+
+func (t *TCPTunnel) SetPacketTrace(on bool) {
+	t.tracePackets.Store(on)
 }
 
 func NewTCPTunnel(trans transport.Transport, isExitNode bool) *TCPTunnel {
@@ -97,7 +105,15 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 
 	tunnelEP := NewTunnelLinkEndpoint()
 	tunnelEP.SetOutgoingPacketHandler(func(data []byte) {
-		trans.Send(data)
+		if t.tracePackets.Load() {
+			if err := trans.Send(data); err != nil {
+				utils.Debugf("[TUNNEL->] send to peer failed (%d bytes): %v", len(data), err)
+				return
+			}
+			utils.Debugf("[TUNNEL->] %d bytes to peer", len(data))
+		} else {
+			trans.Send(data)
+		}
 	})
 	t.tunnelEP = tunnelEP
 
@@ -117,6 +133,9 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 	}
 
 	trans.Receive(func(data []byte) {
+		if t.tracePackets.Load() {
+			utils.Debugf("[TUNNEL<-] %d bytes from peer", len(data))
+		}
 		tunnelEP.InjectInbound(data)
 	})
 

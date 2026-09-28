@@ -546,6 +546,9 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		return nil, err
 	}
 	tun := tunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
+	if k.Transport == "mts" {
+		tun.SetPacketTrace(true)
+	}
 	if portIdx >= 0 {
 		tun.SetPortRange(portStart, portEnd)
 	}
