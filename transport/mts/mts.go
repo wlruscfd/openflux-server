@@ -33,7 +33,10 @@ const (
 	mtsUA        = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 " +
 		"(KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36"
 
-	mtsPingInterval  = 60 * time.Second
+	// 20s matches the boards transport against a comparable websocket board. A 60s interval risks
+	// the board's own idle timeout closing the session between pings, which shows up as a
+	// multi-second stall while the reconnect loop climbs its backoff.
+	mtsPingInterval  = 20 * time.Second
 	mtsReadDeadline  = 90 * time.Second
 	mtsWriteDeadline = 10 * time.Second
 	mtsDialTimeout   = 15 * time.Second
@@ -622,12 +625,12 @@ func reconnectBackoff(n int) time.Duration {
 		n = 1
 	}
 	shift := n - 1
-	if shift > 4 {
-		shift = 4
+	if shift > 3 {
+		shift = 3
 	}
 	d := 500 * time.Millisecond * time.Duration(1<<uint(shift))
-	if d > 15*time.Second {
-		d = 15 * time.Second
+	if d > 5*time.Second {
+		d = 5 * time.Second
 	}
 	d += time.Duration(mrand.Int63n(int64(d/2) + 1))
 	return d
@@ -855,6 +858,9 @@ func buildCursorMessage(sessionUID, guestName, token string, frame []byte) map[s
 	}
 }
 
+// pingLoop keeps the board's view of this guest alive. A failed ping used to end the loop, which
+// silently stopped all keepalives while the session still looked established, so the board
+// eventually dropped us and only the read deadline noticed. It now reconnects instead.
 func (t *Transport) pingLoop(sess *mtsSession, stop chan struct{}) {
 	tick := time.NewTicker(mtsPingInterval)
 	defer tick.Stop()
@@ -866,7 +872,8 @@ func (t *Transport) pingLoop(sess *mtsSession, stop chan struct{}) {
 			return
 		case <-tick.C:
 			if err := sess.sendJSON(map[string]interface{}{"type": "pingRequest"}); err != nil {
-				utils.Debugf("[MTS] ping: %v", err)
+				utils.Debugf("[MTS] ping failed, forcing reconnect: %v", err)
+				t.ForceReconnect()
 				return
 			}
 		}
