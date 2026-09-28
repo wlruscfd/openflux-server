@@ -207,6 +207,37 @@ func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.ForceReconnect()
 }
 
+// cookieNames lists only the names in a Cookie header: enough to tell "the jar arrived" from
+// "the jar arrived but is missing the session cookie" without logging secret values.
+func cookieNames(header string) string {
+	if header == "" {
+		return "(none)"
+	}
+	parts := strings.Split(header, ";")
+	names := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if i := strings.Index(p, "="); i > 0 {
+			names = append(names, strings.TrimSpace(p[:i]))
+		}
+	}
+	return strings.Join(names, ",")
+}
+
+func shortURL(u string) string {
+	if len(u) > 90 {
+		return u[:90] + "..."
+	}
+	return u
+}
+
+func pageTitle(body []byte) string {
+	m := regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`).FindSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(string(m[1]))
+}
+
 // normalizeCookieHeader sorts the pairs so the same jar in a different order compares equal.
 // The WebView rebuilds the header from a map, so its order changes on every poll and a plain
 // string comparison would treat a re-push of the identical jar as new credentials.
@@ -1088,11 +1119,14 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	for hop := 0; hop < 10; hop++ {
 		req, _ := http.NewRequest("GET", currentURL, nil)
 		applyBrowserGetHeaders(req.Header)
+		sent := cookieNames(req.Header.Get("Cookie"))
+		t.debugf("hop %d GET %s (cookies: %s)", hop, shortURL(currentURL), sent)
 		var err error
 		resp, err = client.Do(req)
 		if err != nil {
 			return YandexDocsInfo{}, err
 		}
+		t.debugf("hop %d -> %d %s", hop, resp.StatusCode, resp.Header.Get("Location"))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			htmlBytes, _ = io.ReadAll(resp.Body)
@@ -1100,6 +1134,7 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			finalURL = resp.Request.URL
 			resp.Body.Close()
 			if looksLikeCaptchaHTML(htmlBytes) {
+				t.debugf("hop %d returned a captcha page (%d bytes, title %q)", hop, len(htmlBytes), pageTitle(htmlBytes))
 				if err := solveChallenge(); err != nil {
 					return YandexDocsInfo{}, err
 				}
