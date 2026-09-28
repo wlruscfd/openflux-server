@@ -15,6 +15,7 @@ import (
 	"net/http/cookiejar"
 	neturl "net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -175,17 +176,34 @@ func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
 
 // ProvideCookies feeds a solved session's cookies into subsequent fetches and forces a reconnect.
 func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
+	normalized := normalizeCookieHeader(cookieStr)
 	t.Mu.Lock()
-	if cookieStr == t.providedCookies {
+	if normalized == t.providedCookies {
 		t.Mu.Unlock()
 		t.debugf("ignoring repeated push of the same %d cookie bytes", len(cookieStr))
 		return
 	}
-	t.providedCookies = cookieStr
+	t.providedCookies = normalized
 	t.Mu.Unlock()
 	t.captchaCookieGeneration.Add(1)
 	t.debugf("received %d bytes of externally-solved cookies, forcing a reconnect", len(cookieStr))
 	t.ForceReconnect()
+}
+
+// normalizeCookieHeader sorts the pairs so the same jar in a different order compares equal.
+// The WebView rebuilds the header from a map, so its order changes on every poll and a plain
+// string comparison would treat a re-push of the identical jar as new credentials.
+func normalizeCookieHeader(header string) string {
+	parts := strings.Split(header, ";")
+	cleaned := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+	sort.Strings(cleaned)
+	return strings.Join(cleaned, "; ")
 }
 
 // solveCaptchaIsolated keeps the proof-of-work solver off the live jar. The solver's own
@@ -932,23 +950,34 @@ func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonC
 	}
 	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
 	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", attempt+1, int(delay.Seconds()), reasonCode, causeText))
-	if delay > 0 && minDelay == 0 {
-		wake := make(chan struct{})
-		t.Mu.Lock()
-		t.wakeReconnect = wake
-		t.Mu.Unlock()
-
-		select {
-		case <-time.After(delay):
-		case <-wake:
-			t.debugf("backoff wait cut short by ForceReconnect")
+	if delay > 0 {
+		// A minimum delay means a cooldown the caller wants honoured, so no wake channel is
+		// registered and a cookie push cannot shorten the wait. The sleep itself always happens.
+		var wake chan struct{}
+		if minDelay == 0 {
+			wake = make(chan struct{})
+			t.Mu.Lock()
+			t.wakeReconnect = wake
+			t.Mu.Unlock()
 		}
 
-		t.Mu.Lock()
-		if t.wakeReconnect == wake {
-			t.wakeReconnect = nil
+		if wake == nil {
+			<-time.After(delay)
+		} else {
+			select {
+			case <-time.After(delay):
+			case <-wake:
+				t.debugf("backoff wait cut short by ForceReconnect")
+			}
 		}
-		t.Mu.Unlock()
+
+		if wake != nil {
+			t.Mu.Lock()
+			if t.wakeReconnect == wake {
+				t.wakeReconnect = nil
+			}
+			t.Mu.Unlock()
+		}
 	}
 	if !t.IsRunning() {
 		return

@@ -963,6 +963,12 @@ func TestProvideCookiesIgnoresIdenticalJar(t *testing.T) {
 		t.Errorf("generation = %d after a repeated identical push, want %d - a no-op push must not force a reconnect", got, afterFirst)
 	}
 
+	// The WebView rebuilds the header from a map, so the same jar arrives in a new order.
+	tr.ProvideCookies("b=2; a=1")
+	if got := tr.captchaCookieGeneration.Load(); got != afterFirst {
+		t.Errorf("generation = %d after a re-ordered identical jar, want %d", got, afterFirst)
+	}
+
 	tr.ProvideCookies("a=1; b=3")
 	if got := tr.captchaCookieGeneration.Load(); got == afterFirst {
 		t.Error("generation unchanged after a genuinely different jar")
@@ -970,52 +976,80 @@ func TestProvideCookiesIgnoresIdenticalJar(t *testing.T) {
 }
 
 func TestCaptchaCooldownSurvivesForceReconnect(t *testing.T) {
-	// A solved-captcha cookie push calls ForceReconnect. If that can close the backoff
-	// wake channel for a captcha failure, the cooldown is skipped and the captcha prompt
-	// re-opens on every retry (~1s) instead of every 3 minutes.
-	assertNoWakeChannel := func(t *testing.T, minDelay time.Duration) {
-		t.Helper()
-		tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
-			ReconnectDelay:       time.Millisecond,
-			ReconnectMultiplier:  1,
-			MaxReconnectAttempts: 999,
-		})
-		tr.BaseTransport.Start()
-		defer tr.Stop()
+	// A solved-captcha cookie push calls ForceReconnect. A cooldown must still be slept
+	// through no matter how often that happens: dropping the sleep turns the captcha retry
+	// into a hot loop and the client prompt re-opens about once a second.
+	const minDelay = 400 * time.Millisecond
 
-		retrying := make(chan struct{})
-		var once sync.Once
-		tr.SetEventCallback(func(code, detail string) {
-			if code == transport.EventRetrying {
-				once.Do(func() { close(retrying) })
-			}
-		})
+	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
+		ReconnectDelay:       time.Millisecond,
+		ReconnectMultiplier:  1,
+		MaxReconnectAttempts: 999,
+	})
+	tr.BaseTransport.Start()
+	defer tr.Stop()
 
-		go tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), minDelay)
-		select {
-		case <-retrying:
-		case <-time.After(5 * time.Second):
-			t.Fatal("no retrying event")
+	// Stop from the event so connectToDoc is not entered: this isolates the wait itself.
+	var once sync.Once
+	tr.SetEventCallback(func(code, detail string) {
+		if code == transport.EventRetrying {
+			once.Do(func() { tr.Stop() })
 		}
+	})
 
-		tr.Mu.Lock()
-		wake := tr.wakeReconnect
-		tr.Mu.Unlock()
+	returned := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), minDelay)
+		returned <- time.Since(start)
+	}()
 
-		if minDelay > 0 && wake != nil {
-			t.Error("captcha retry registered a wake channel, so ForceReconnect can cut the cooldown short")
-		}
-		if minDelay == 0 && wake == nil {
-			t.Error("plain backoff registered no wake channel, so ForceReconnect cannot cut it short")
-		}
+	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < 5; i++ {
+		tr.ForceReconnect()
+		time.Sleep(20 * time.Millisecond)
 	}
 
-	t.Run("cooldown floor is not interruptible", func(t *testing.T) {
-		assertNoWakeChannel(t, captchaCooldown)
+	select {
+	case took := <-returned:
+		if took < minDelay {
+			t.Errorf("waited %v, want at least %v - ForceReconnect cut the captcha cooldown short", took, minDelay)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduleReconnectWithMinDelay never returned")
+	}
+}
+
+func TestScheduleReconnectKeepsPlainBackoffInterruptible(t *testing.T) {
+	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
+		ReconnectDelay:       5 * time.Second,
+		ReconnectMultiplier:  1,
+		MaxReconnectAttempts: 999,
 	})
-	t.Run("plain backoff stays interruptible", func(t *testing.T) {
-		assertNoWakeChannel(t, 0)
+	tr.BaseTransport.Start()
+	defer tr.Stop()
+
+	retrying := make(chan struct{})
+	var once sync.Once
+	tr.SetEventCallback(func(code, detail string) {
+		if code == transport.EventRetrying {
+			once.Do(func() { close(retrying) })
+		}
 	})
+
+	go tr.scheduleReconnect(0, reasonFetchFailed, errors.New("boom"))
+	select {
+	case <-retrying:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no retrying event")
+	}
+
+	tr.Mu.Lock()
+	wake := tr.wakeReconnect
+	tr.Mu.Unlock()
+	if wake == nil {
+		t.Fatal("plain backoff registered no wake channel, so ForceReconnect cannot cut it short")
+	}
 }
 
 func TestScheduleReconnectDoesNothingWhenNotRunning(t *testing.T) {
