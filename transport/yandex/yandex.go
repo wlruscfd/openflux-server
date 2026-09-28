@@ -951,33 +951,24 @@ func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonC
 	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
 	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", attempt+1, int(delay.Seconds()), reasonCode, causeText))
 	if delay > 0 {
-		// A minimum delay means a cooldown the caller wants honoured, so no wake channel is
-		// registered and a cookie push cannot shorten the wait. The sleep itself always happens.
-		var wake chan struct{}
-		if minDelay == 0 {
-			wake = make(chan struct{})
-			t.Mu.Lock()
-			t.wakeReconnect = wake
-			t.Mu.Unlock()
+		// A changed jar must take effect promptly, so the wait stays interruptible. Repeated
+		// pushes of the same jar never reach here: ProvideCookies ignores an unchanged one.
+		wake := make(chan struct{})
+		t.Mu.Lock()
+		t.wakeReconnect = wake
+		t.Mu.Unlock()
+
+		select {
+		case <-time.After(delay):
+		case <-wake:
+			t.debugf("backoff wait cut short by ForceReconnect")
 		}
 
-		if wake == nil {
-			<-time.After(delay)
-		} else {
-			select {
-			case <-time.After(delay):
-			case <-wake:
-				t.debugf("backoff wait cut short by ForceReconnect")
-			}
+		t.Mu.Lock()
+		if t.wakeReconnect == wake {
+			t.wakeReconnect = nil
 		}
-
-		if wake != nil {
-			t.Mu.Lock()
-			if t.wakeReconnect == wake {
-				t.wakeReconnect = nil
-			}
-			t.Mu.Unlock()
-		}
+		t.Mu.Unlock()
 	}
 	if !t.IsRunning() {
 		return

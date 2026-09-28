@@ -975,10 +975,10 @@ func TestProvideCookiesIgnoresIdenticalJar(t *testing.T) {
 	}
 }
 
-func TestCaptchaCooldownSurvivesForceReconnect(t *testing.T) {
-	// A solved-captcha cookie push calls ForceReconnect. A cooldown must still be slept
-	// through no matter how often that happens: dropping the sleep turns the captcha retry
-	// into a hot loop and the client prompt re-opens about once a second.
+func TestCaptchaCooldownHonoursUnchangedCookiePushes(t *testing.T) {
+	// The loop the client hit: the WebView re-pushed the identical jar on every poll and
+	// each push cut the cooldown short, so the captcha prompt re-opened about once a second.
+	// An unchanged jar must therefore not interrupt the wait at all.
 	const minDelay = 400 * time.Millisecond
 
 	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
@@ -989,7 +989,8 @@ func TestCaptchaCooldownSurvivesForceReconnect(t *testing.T) {
 	tr.BaseTransport.Start()
 	defer tr.Stop()
 
-	// Stop from the event so connectToDoc is not entered: this isolates the wait itself.
+	tr.ProvideCookies("a=1; b=2")
+
 	var once sync.Once
 	tr.SetEventCallback(func(code, detail string) {
 		if code == transport.EventRetrying {
@@ -1005,50 +1006,59 @@ func TestCaptchaCooldownSurvivesForceReconnect(t *testing.T) {
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	for i := 0; i < 5; i++ {
-		tr.ForceReconnect()
-		time.Sleep(20 * time.Millisecond)
+	for i := 0; i < 6; i++ {
+		tr.ProvideCookies("b=2; a=1")
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	select {
 	case took := <-returned:
 		if took < minDelay {
-			t.Errorf("waited %v, want at least %v - ForceReconnect cut the captcha cooldown short", took, minDelay)
+			t.Errorf("waited %v, want at least %v - a re-push of the same jar cut the cooldown short", took, minDelay)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("scheduleReconnectWithMinDelay never returned")
 	}
 }
 
-func TestScheduleReconnectKeepsPlainBackoffInterruptible(t *testing.T) {
+func TestCaptchaCooldownIsCutShortByNewCookieJar(t *testing.T) {
+	// A genuinely solved captcha must take effect at once, not after the full cooldown.
+	const minDelay = 10 * time.Second
+
 	tr := NewYandexDocsTransport("http://unused.invalid", transport.TransportConfig{
-		ReconnectDelay:       5 * time.Second,
+		ReconnectDelay:       time.Millisecond,
 		ReconnectMultiplier:  1,
 		MaxReconnectAttempts: 999,
 	})
 	tr.BaseTransport.Start()
 	defer tr.Stop()
 
-	retrying := make(chan struct{})
+	tr.ProvideCookies("a=1")
+
 	var once sync.Once
 	tr.SetEventCallback(func(code, detail string) {
 		if code == transport.EventRetrying {
-			once.Do(func() { close(retrying) })
+			once.Do(func() { tr.Stop() })
 		}
 	})
 
-	go tr.scheduleReconnect(0, reasonFetchFailed, errors.New("boom"))
-	select {
-	case <-retrying:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no retrying event")
-	}
+	returned := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		tr.scheduleReconnectWithMinDelay(0, reasonCaptchaBlocked, errors.New("captcha"), minDelay)
+		returned <- time.Since(start)
+	}()
 
-	tr.Mu.Lock()
-	wake := tr.wakeReconnect
-	tr.Mu.Unlock()
-	if wake == nil {
-		t.Fatal("plain backoff registered no wake channel, so ForceReconnect cannot cut it short")
+	time.Sleep(100 * time.Millisecond)
+	tr.ProvideCookies("a=2; b=9")
+
+	select {
+	case took := <-returned:
+		if took > 3*time.Second {
+			t.Errorf("waited %v after a new jar arrived, want it applied promptly", took)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduleReconnectWithMinDelay never returned")
 	}
 }
 
