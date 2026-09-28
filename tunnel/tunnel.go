@@ -17,6 +17,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 
+	"universal-bypass-tool/network"
 	"universal-bypass-tool/transport"
 	"universal-bypass-tool/utils"
 )
@@ -134,7 +135,7 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 
 	trans.Receive(func(data []byte) {
 		if t.tracePackets.Load() {
-			utils.Debugf("[TUNNEL<-] %d bytes from peer", len(data))
+			utils.Debugf("[TUNNEL<-] %d bytes - %s", len(data), network.ParsePacketInfo(data))
 		}
 		tunnelEP.InjectInbound(data)
 	})
