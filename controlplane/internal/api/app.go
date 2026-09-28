@@ -66,6 +66,10 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("POST /v1/nodes/{id}/heartbeat", a.withNodeToken(a.handleNodeHeartbeat))
 
 	mux.HandleFunc("POST /v1/resolve", a.withRateLimit(a.handleResolve))
+	mux.HandleFunc("POST /v1/keys/cookies", a.handlePostKeyCookies)
+	mux.HandleFunc("DELETE /v1/keys/cookies", a.handlePostKeyCookies)
+	mux.HandleFunc("GET /v1/nodes/cookies", a.withNodeToken(a.handleNodeListCookies))
+	mux.HandleFunc("GET /v1/admin/keys/{id}/cookies/status", a.withAdmin(a.handleKeyCookieStatus))
 
 	return withLogging(mux)
 }

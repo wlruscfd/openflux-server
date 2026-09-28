@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -431,6 +432,154 @@ func (s *Store) SetKeyTrafficLimit(ctx context.Context, id string, limit *int64)
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpdateKeyParams is a partial update: a nil field is left alone, and the doc-link fields are
+// only re-checked against other keys when they actually change, so editing a label or a limit
+// never trips the one-doc-per-key rule on the key's own current link.
+type UpdateKeyParams struct {
+	Label             *string
+	Transport         *string
+	DocURL            *string
+	DocURLs           *[]string
+	E2EEncryption     *bool
+	TrafficLimitBytes *OptionalInt64
+	OwnerRef          *string
+	ExpiresAt         **time.Time
+	FinalExitNodeID   **string
+	Enabled           *bool
+}
+
+type OptionalInt64 struct {
+	Set   bool
+	Value *int64
+}
+
+// docURLsTouched reports whether this update moves the key to a different document.
+func (p UpdateKeyParams) docURLsTouched() bool {
+	return p.DocURL != nil || p.DocURLs != nil
+}
+
+func (p UpdateKeyParams) urlSet() []string {
+	set := make([]string, 0, 2)
+	if p.DocURL != nil && *p.DocURL != "" {
+		set = append(set, *p.DocURL)
+	}
+	if p.DocURLs != nil {
+		set = append(set, *p.DocURLs...)
+	}
+	return set
+}
+
+// assignments builds the SET clause and its arguments. Kept separate from the SQL execution so
+// the "only what was asked for" behaviour is unit-testable without a database.
+func (p UpdateKeyParams) assignments() (string, []any) {
+	cols := make([]string, 0, 9)
+	args := make([]any, 0, 9)
+	add := func(col string, v any) {
+		args = append(args, v)
+		cols = append(cols, fmt.Sprintf("%s = $%d", col, len(args)))
+	}
+	if p.Label != nil {
+		add("label", *p.Label)
+	}
+	if p.Transport != nil {
+		add("transport", *p.Transport)
+	}
+	if p.DocURL != nil {
+		add("doc_url", *p.DocURL)
+	}
+	if p.DocURLs != nil {
+		add("doc_urls", *p.DocURLs)
+	}
+	if p.E2EEncryption != nil {
+		add("e2e_encryption", *p.E2EEncryption)
+	}
+	if p.TrafficLimitBytes != nil {
+		add("traffic_limit_bytes", p.TrafficLimitBytes.Value)
+	}
+	if p.OwnerRef != nil {
+		add("owner_ref", *p.OwnerRef)
+	}
+	if p.ExpiresAt != nil {
+		add("expires_at", *p.ExpiresAt)
+	}
+	if p.FinalExitNodeID != nil {
+		add("final_exit_node_id", *p.FinalExitNodeID)
+	}
+	if p.Enabled != nil {
+		add("enabled", *p.Enabled)
+	}
+	if len(cols) == 0 {
+		return "", nil
+	}
+	cols = append(cols, "updated_at = now()")
+	return strings.Join(cols, ", "), args
+}
+
+// UpdateKeyGuarded applies a partial update in one transaction, holding the advisory locks for
+// both the old and the new link set so two keys cannot be swapped onto the same document at once.
+func (s *Store) UpdateKeyGuarded(ctx context.Context, id string, p UpdateKeyParams) (model.Key, error) {
+	set, args := p.assignments()
+	if set == "" {
+		k, err := s.GetKeyByID(ctx, id)
+		return k, err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Key{}, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	current, err := getKeyByIDTx(ctx, tx, id)
+	if err != nil {
+		return model.Key{}, err
+	}
+
+	lockSet := p.urlSet()
+	if p.docURLsTouched() {
+		lockSet = append(lockSet, current.DocURL)
+		lockSet = append(lockSet, current.DocURLs...)
+	}
+	if err := lockDocURLs(ctx, tx, lockSet); err != nil {
+		return model.Key{}, err
+	}
+
+	if p.docURLsTouched() {
+		inUse, err := docURLInUseTx(ctx, tx, lockSet, id)
+		if err != nil {
+			return model.Key{}, err
+		}
+		if inUse {
+			return model.Key{}, ErrDocURLInUse
+		}
+	}
+
+	args = append(args, id)
+	row := tx.QueryRow(ctx, `UPDATE keys SET `+set+fmt.Sprintf(" WHERE id = $%d AND deleted_at IS NULL RETURNING ", len(args))+keyColumns, args...)
+	k, err := scanKey(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Key{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Key{}, fmt.Errorf("update key: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.Key{}, fmt.Errorf("commit: %w", err)
+	}
+	return k, nil
+}
+
+func getKeyByIDTx(ctx context.Context, tx pgx.Tx, id string) (model.Key, error) {
+	k, err := scanKey(tx.QueryRow(ctx, `SELECT `+keyColumns+` FROM keys WHERE id = $1 AND deleted_at IS NULL`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Key{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Key{}, fmt.Errorf("get key: %w", err)
+	}
+	return k, nil
 }
 
 // DeleteKey soft-deletes: the row (and its lifetime usage totals) stays for the panel's charts, since every other Store method already treats deleted_at IS NOT NULL as "doesn't exist".

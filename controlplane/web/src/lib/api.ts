@@ -204,6 +204,21 @@ export const api = {
 		request('POST', `/v1/admin/keys/${id}/${enabled ? 'enable' : 'disable'}`),
 	rotateKeyToken: (id: string) =>
 		request<RotateKeyResult>('POST', `/v1/admin/keys/${id}/rotate-token`),
+	patchKey: (
+		id: string,
+		body: {
+			label?: string;
+			transport?: string;
+			doc_url?: string;
+			doc_urls?: string[];
+			e2e_encryption?: boolean;
+			traffic_limit_bytes?: number | null;
+			owner_ref?: string;
+			expires_at?: string | null;
+			final_exit_node_id?: string | null;
+			enabled?: boolean;
+		},
+	) => request<KeyDTO>('PATCH', `/v1/admin/keys/${id}`, body),
 	patchKeyLimit: (id: string, limitBytes: number | null) =>
 		request('PATCH', `/v1/admin/keys/${id}`, { traffic_limit_bytes: limitBytes }),
 	patchKeyFinalExit: (id: string, finalExitNodeId: string | null) =>

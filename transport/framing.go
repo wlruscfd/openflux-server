@@ -11,6 +11,11 @@ import (
 const (
 	batchFormatVersion = 0x02
 	batchFlagZstd      = 0x01
+	// maxFrameBytes/maxFrameRecords bound what a peer can make us allocate: a document is a
+	// shared channel, so a malformed or hostile frame must not be able to turn into unbounded
+	// memory or an unbounded record slice. Both limits sit far above what any sender produces.
+	maxFrameBytes   = 1 << 20
+	maxFrameRecords = 1024
 )
 
 var (
@@ -74,6 +79,9 @@ func IsBatchFrame(data []byte) bool {
 
 // DecodeBatch reverses EncodeBatch, returning the original packets.
 func DecodeBatch(data []byte) ([][]byte, error) {
+	if len(data) > maxFrameBytes+2 {
+		return nil, fmt.Errorf("batch frame exceeds size limit: %d bytes", len(data))
+	}
 	if len(data) < 2 {
 		return nil, fmt.Errorf("batch frame too short: %d bytes", len(data))
 	}
@@ -81,6 +89,9 @@ func DecodeBatch(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("unknown batch version 0x%02x", data[0])
 	}
 	flags := data[1]
+	if flags&^byte(batchFlagZstd) != 0 {
+		return nil, fmt.Errorf("unknown batch flags 0x%02x", flags)
+	}
 	payload := data[2:]
 
 	framed := payload
@@ -91,9 +102,15 @@ func DecodeBatch(data []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("zstd decode: %w", err)
 		}
 	}
+	if len(framed) > maxFrameBytes {
+		return nil, fmt.Errorf("decoded batch exceeds size limit: %d bytes", len(framed))
+	}
 
 	var pkts [][]byte
 	for len(framed) > 0 {
+		if len(pkts) >= maxFrameRecords {
+			return nil, fmt.Errorf("batch exceeds record limit of %d", maxFrameRecords)
+		}
 		if len(framed) < 2 {
 			return nil, fmt.Errorf("truncated length prefix")
 		}

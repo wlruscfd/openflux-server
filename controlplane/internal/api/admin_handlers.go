@@ -1,8 +1,11 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"openflux-control/internal/auth"
 	"openflux-control/internal/model"
@@ -251,8 +254,79 @@ func (a *App) handleGetKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, k)
 }
 
+// patchKeyRequest is a partial update: an absent field is left alone, while an explicit null
+// clears the nullable ones (traffic limit, expiry, final exit). That distinction is why the
+// nullable fields are pointers-to-pointers instead of plain pointers.
 type patchKeyRequest struct {
-	TrafficLimitBytes *int64 `json:"traffic_limit_bytes"`
+	Label             *string   `json:"label"`
+	Transport         *string   `json:"transport"`
+	DocURL            *string   `json:"doc_url"`
+	DocURLs           *[]string `json:"doc_urls"`
+	E2EEncryption     *bool     `json:"e2e_encryption"`
+	TrafficLimitBytes *int64    `json:"traffic_limit_bytes"`
+	OwnerRef          *string   `json:"owner_ref"`
+	ExpiresAt         *string   `json:"expires_at"`
+	FinalExitNodeID   *string   `json:"final_exit_node_id"`
+	Enabled           *bool     `json:"enabled"`
+}
+
+func (r patchKeyRequest) params() (store.UpdateKeyParams, error) {
+	p := store.UpdateKeyParams{
+		Label:         r.Label,
+		Transport:     r.Transport,
+		DocURL:        r.DocURL,
+		DocURLs:       r.DocURLs,
+		E2EEncryption: r.E2EEncryption,
+		OwnerRef:      r.OwnerRef,
+		Enabled:       r.Enabled,
+	}
+	if r.Label != nil && strings.TrimSpace(*r.Label) == "" {
+		return p, errors.New("label must not be empty")
+	}
+	if r.Transport != nil && strings.TrimSpace(*r.Transport) == "" {
+		return p, errors.New("transport must not be empty")
+	}
+	if r.DocURL != nil && strings.TrimSpace(*r.DocURL) == "" {
+		return p, errors.New("doc_url must not be empty")
+	}
+	if r.DocURLs != nil {
+		cleaned := make([]string, 0, len(*r.DocURLs))
+		for _, u := range *r.DocURLs {
+			if u = strings.TrimSpace(u); u != "" {
+				cleaned = append(cleaned, u)
+			}
+		}
+		if len(cleaned) == 0 {
+			return p, errors.New("doc_urls must not be empty")
+		}
+		p.DocURLs = &cleaned
+	}
+	if r.TrafficLimitBytes != nil {
+		if *r.TrafficLimitBytes < 0 {
+			return p, errors.New("traffic_limit_bytes must not be negative")
+		}
+		p.TrafficLimitBytes = &store.OptionalInt64{Set: true, Value: r.TrafficLimitBytes}
+	}
+	if r.ExpiresAt != nil {
+		var expires *time.Time
+		if *r.ExpiresAt != "" {
+			parsed, err := time.Parse(time.RFC3339, *r.ExpiresAt)
+			if err != nil {
+				return p, errors.New("expires_at must be RFC3339 or null")
+			}
+			expires = &parsed
+		}
+		p.ExpiresAt = &expires
+	}
+	if r.FinalExitNodeID != nil {
+		var nodeID *string
+		if *r.FinalExitNodeID != "" {
+			v := *r.FinalExitNodeID
+			nodeID = &v
+		}
+		p.FinalExitNodeID = &nodeID
+	}
+	return p, nil
 }
 
 func (a *App) handlePatchKey(w http.ResponseWriter, r *http.Request) {
@@ -261,16 +335,29 @@ func (a *App) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	params, err := req.params()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	if err := a.Store.SetKeyTrafficLimit(r.Context(), r.PathValue("id"), req.TrafficLimitBytes); err == store.ErrNotFound {
+	k, err := a.Store.UpdateKeyGuarded(r.Context(), r.PathValue("id"), params)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "key not found")
 		return
-	} else if err != nil {
+	case errors.Is(err, store.ErrDocURLInUse):
+		writeError(w, http.StatusConflict, "doc_url is already used by another enabled key - each key needs its own document")
+		return
+	case errors.Is(err, store.ErrNoFinalExitAddress):
+		writeError(w, http.StatusConflict, "that node has no public_address set yet - add one before using it as a final exit")
+		return
+	case err != nil:
 		writeInternalError(w, r, "update key failed", err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	writeJSON(w, http.StatusOK, k)
 }
 
 type patchKeyFinalExitRequest struct {

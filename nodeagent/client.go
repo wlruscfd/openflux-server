@@ -45,9 +45,25 @@ func (k RemoteKey) IsRelayed() bool {
 	return k.RelayHost != nil && k.RelayPort != nil
 }
 
+type RemoteKeyCookie struct {
+	KeyID     string `json:"key_id"`
+	Transport string `json:"transport"`
+	Cookies   string `json:"cookies"`
+}
+
 func (c *ControlClient) ListKeys(ctx context.Context) ([]RemoteKey, error) {
 	var out []RemoteKey
 	if err := c.do(ctx, http.MethodGet, "/v1/nodes/keys", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListKeyCookies returns the jars the client pushed for this node's keys. A failed fetch is
+// not fatal: the reconcile that calls it must keep working on the keys that have no jar.
+func (c *ControlClient) ListKeyCookies(ctx context.Context) ([]RemoteKeyCookie, error) {
+	var out []RemoteKeyCookie
+	if err := c.do(ctx, http.MethodGet, "/v1/nodes/cookies", nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

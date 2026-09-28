@@ -3,6 +3,8 @@ package nodeagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -56,8 +58,31 @@ type worker struct {
 	docURL  string
 	portIdx int
 
+	transportName string
+	docURLs       []string
+	e2e           bool
+	cookieHash    string
+
 	lastSent uint64
 	lastRecv uint64
+}
+
+// driftedFrom reports whether the panel changed something about this key that the running
+// transport was built from. Without this an edited doc_url or transport would keep using the old
+// one until the node itself restarted, which looks like the edit was silently ignored.
+func (w *worker) driftedFrom(k RemoteKey) bool {
+	if w.transportName != k.Transport || w.docURL != k.DocURL || w.e2e != k.E2EEncryption {
+		return true
+	}
+	if len(w.docURLs) != len(k.DocURLs) {
+		return true
+	}
+	for i := range k.DocURLs {
+		if w.docURLs[i] != k.DocURLs[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // relayExitWorker is the other half of a cascade: it never talks to Yandex at all, just accepts the entry node's relayed traffic and runs a normal raw/proxy exit for it.
@@ -175,8 +200,77 @@ func (o *Orchestrator) pollLoop(ctx context.Context) {
 
 const workerStartStagger = 150 * time.Millisecond
 
+type cookieProvider interface {
+	ProvideCookies(cookieStr string)
+}
+
+// applyCookies pushes freshly uploaded jars into the transports already running here and drops
+// the session so the next attempt presents them. A key the client can pass a provider check on
+// but this node cannot is the whole point: the jar arrives from outside, not from a solver.
+func (o *Orchestrator) applyCookies(ctx context.Context) {
+	jars, err := o.client.ListKeyCookies(ctx)
+	if err != nil {
+		utils.Debugf("[NODEAGENT] list cookies failed: %v", err)
+		return
+	}
+	byKey := make(map[string]RemoteKeyCookie, len(jars))
+	for _, j := range jars {
+		if j.KeyID != "" && j.Cookies != "" {
+			byKey[j.KeyID] = j
+		}
+	}
+	o.applyCookiesWith(byKey)
+}
+
+func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
+	if len(byKey) == 0 {
+		return
+	}
+
+	o.mu.Lock()
+	targets := make([]struct {
+		w    *worker
+		hash string
+		jar  string
+	}, 0, len(byKey))
+	for id, j := range byKey {
+		w, ok := o.workers[id]
+		if !ok {
+			continue
+		}
+		hash := cookieFingerprint(j.Cookies)
+		if hash == "" || hash == w.cookieHash {
+			continue
+		}
+		w.cookieHash = hash
+		targets = append(targets, struct {
+			w    *worker
+			hash string
+			jar  string
+		}{w: w, hash: hash, jar: j.Cookies})
+	}
+	o.mu.Unlock()
+
+	for _, t := range targets {
+		provider, ok := t.w.trans.(cookieProvider)
+		if !ok {
+			utils.Debugf("[NODEAGENT] transport for key cannot accept cookies, skipping")
+			continue
+		}
+		utils.Debugf("[NODEAGENT] applying uploaded cookies (%d bytes) and dropping session", len(t.jar))
+		provider.ProvideCookies(t.jar)
+		t.w.trans.ForceReconnect()
+	}
+}
+
+func cookieFingerprint(jar string) string {
+	sum := sha256.Sum256([]byte(jar))
+	return hex.EncodeToString(sum[:8])
+}
+
 func (o *Orchestrator) reconcile(ctx context.Context) {
 	o.reconcileRelayExits(ctx)
+	o.applyCookies(ctx)
 
 	keys, err := o.client.ListKeys(ctx)
 	if err != nil {
@@ -189,16 +283,24 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		active[k.ID] = k
 	}
 
+	var toStart []RemoteKey
 	o.mu.Lock()
 	for id, w := range o.workers {
-		if _, stillActive := active[id]; !stillActive {
+		k, stillActive := active[id]
+		if !stillActive {
 			utils.Debugf("[NODEAGENT] stopping worker for key %s (no longer active)", id)
 			o.stopWorker(w)
 			delete(o.workers, id)
+			continue
+		}
+		if w.driftedFrom(k) {
+			utils.Debugf("[NODEAGENT] restarting worker for key %s (doc/transport/e2e changed in the panel)", id)
+			o.stopWorker(w)
+			delete(o.workers, id)
+			toStart = append(toStart, k)
 		}
 	}
 
-	var toStart []RemoteKey
 	for id, k := range active {
 		if _, exists := o.workers[id]; exists {
 			continue
@@ -356,7 +458,15 @@ func (o *Orchestrator) startRelayBridgeWorker(k RemoteKey) (*worker, error) {
 		}
 	})
 
-	return &worker{trans: yd, relayTo: relay, docURL: k.DocURL, portIdx: -1}, nil
+	return &worker{
+		trans:         yd,
+		relayTo:       relay,
+		docURL:        k.DocURL,
+		portIdx:       -1,
+		transportName: k.Transport,
+		docURLs:       append([]string(nil), k.DocURLs...),
+		e2e:           k.E2EEncryption,
+	}, nil
 }
 
 func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
@@ -439,7 +549,15 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	if portIdx >= 0 {
 		tun.SetPortRange(portStart, portEnd)
 	}
-	return &worker{trans: trans, tun: tun, docURL: label, portIdx: portIdx}, nil
+	return &worker{
+		trans:         trans,
+		tun:           tun,
+		docURL:        label,
+		portIdx:       portIdx,
+		transportName: k.Transport,
+		docURLs:       append([]string(nil), k.DocURLs...),
+		e2e:           k.E2EEncryption,
+	}, nil
 }
 
 func (o *Orchestrator) stopWorker(w *worker) {

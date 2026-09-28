@@ -58,7 +58,6 @@
 	let transport = $state('yandex');
 	let e2eEncryption = $state(false);
 	let limitGb = $state('');
-	let ownerRef = $state('');
 	let creating = $state(false);
 	const isMultistream = $derived(transport === 'yandex_multistream');
 
@@ -90,6 +89,42 @@
 		nodes.filter((n) => n.PublicAddress && n.ID !== cascadeKey?.AssignedNodeID)
 	);
 
+	// edit modal
+	let editKey = $state<KeyDTO | null>(null);
+	let editLabel = $state('');
+	let editTransport = $state('yandex');
+	let editDocUrl = $state('');
+	let editDocUrls = $state('');
+	let editE2e = $state(false);
+	let editLimitGb = $state('');
+	let editEnabled = $state(true);
+	let editBusy = $state(false);
+	let editError = $state<string | null>(null);
+	const editIsMultistream = $derived(editTransport === 'yandex_multistream');
+
+	let listError = $state<string | null>(null);
+
+	const docLabel: Record<string, string> = {
+		yandex: 'keys.docUrlYandex',
+		volga: 'keys.docUrlYandex',
+		yandex_multistream: 'keys.docUrlsYandex',
+		boards: 'keys.docUrlBoards',
+		mailru: 'keys.docUrlMailru',
+		mts: 'keys.docUrlMts',
+		direct: 'keys.docUrlDirect'
+	};
+	const docPlaceholder: Record<string, string> = {
+		yandex: 'keys.docUrlPhYandex',
+		volga: 'keys.docUrlPhYandex',
+		yandex_multistream: 'keys.docUrlsPhYandex',
+		boards: 'keys.docUrlPhBoards',
+		mailru: 'keys.docUrlPhMailru',
+		mts: 'keys.docUrlPhMts',
+		direct: 'keys.docUrlPhDirect'
+	};
+	const docLabelFor = (tr: string) => t(docLabel[tr] ?? 'keys.docUrlGeneric');
+	const docPlaceholderFor = (tr: string) => t(docPlaceholder[tr] ?? 'keys.docUrlPhGeneric');
+
 	function errText(e: unknown): string {
 		if (e instanceof ApiError) {
 			if (e.message === 'network_error') return t('generic.error');
@@ -107,8 +142,10 @@
 				limit: PAGE_SIZE,
 				offset: page * PAGE_SIZE
 			});
-		} catch {
+			listError = null;
+		} catch (e) {
 			keys = [];
+			listError = errText(e);
 		} finally {
 			loading = false;
 		}
@@ -120,6 +157,10 @@
 		} catch {
 			nodes = [];
 		}
+	}
+
+	async function refreshAll() {
+		await Promise.all([loadKeys(), loadNodes()]);
 	}
 
 	$effect(() => {
@@ -160,13 +201,11 @@
 				transport: transport || undefined,
 				e2e_encryption: e2eEncryption,
 				traffic_limit_bytes: gbToBytes(limitGb),
-				owner_ref: ownerRef.trim() || undefined
 			});
 			toast.ok(t('keys.createSuccess'));
 			label = '';
 			docUrl = '';
 			docUrls = '';
-			ownerRef = '';
 			limitGb = '';
 			e2eEncryption = false;
 			await loadKeys();
@@ -251,6 +290,73 @@
 			});
 	}
 
+	function openEdit(k: KeyDTO) {
+		editKey = k;
+		editLabel = k.Label;
+		editTransport = k.Transport;
+		editDocUrl = k.DocURL;
+		editDocUrls = (k.DocURLs ?? []).join('\n');
+		editE2e = k.E2EEncryption;
+		editLimitGb =
+			k.TrafficLimitBytes != null ? String(Math.round((k.TrafficLimitBytes / 1024 ** 3) * 10) / 10) : '';
+		editEnabled = k.Enabled;
+		editError = null;
+	}
+
+	async function saveEdit() {
+		if (!editKey || editBusy) return;
+		editBusy = true;
+		editError = null;
+		try {
+			const body: Parameters<typeof api.patchKey>[1] = {
+				label: editLabel.trim(),
+				transport: editTransport,
+				e2e_encryption: editE2e,
+				enabled: editEnabled
+			};
+			const limit = editLimitGb.trim();
+			if (limit === '') {
+				if (editKey.TrafficLimitBytes != null) body.traffic_limit_bytes = null;
+			} else {
+				const g = parseFloat(limit);
+				if (isNaN(g) || g <= 0) {
+					editError = t('keys.limitGbShort');
+					editBusy = false;
+					return;
+				}
+				body.traffic_limit_bytes = Math.round(g * 1024 ** 3);
+			}
+			if (editIsMultistream) {
+				const parsed = editDocUrls
+					.split('\n')
+					.map((s) => s.trim())
+					.filter((s) => s);
+				if (parsed.length < 2) {
+					editError = t('keys.invalidDocUrls');
+					editBusy = false;
+					return;
+				}
+				body.doc_urls = parsed;
+				body.doc_url = '';
+			} else {
+				if (!editDocUrl.trim()) {
+					editError = docLabelFor(editTransport);
+					editBusy = false;
+					return;
+				}
+				body.doc_url = editDocUrl.trim();
+			}
+			await api.patchKey(editKey.ID, body);
+			toast.ok(t('keys.editSaved'));
+			editKey = null;
+			await refreshAll();
+		} catch (e) {
+			editError = errText(e);
+		} finally {
+			editBusy = false;
+		}
+	}
+
 	function confirmDelete(k: KeyDTO) {
 		confirmDialog.ask({
 			title: t('keys.deleteConfirmTitle'),
@@ -303,7 +409,17 @@
 <div class="space-y-6">
 	<div class="flex items-center justify-between gap-3">
 		<h1 class="text-xl font-semibold text-[var(--of-ink)]">{t('keys.title')}</h1>
+		<button type="button" class="of-iconbtn" title={t('generic.refresh')} disabled={loading} onclick={refreshAll}>
+			<RotateCcw class="h-4 w-4" />
+		</button>
 	</div>
+
+	{#if listError}
+		<p class="flex items-center gap-1.5 rounded-xl border border-[var(--of-danger)] px-3 py-2 text-sm text-[var(--of-danger)]">
+			<AlertCircle class="h-4 w-4" />
+			{listError}
+		</p>
+	{/if}
 
 	<!-- Create -->
 	<Card title={t('keys.createTitle')}>
@@ -320,13 +436,13 @@
 			</label>
 			{#if isMultistream}
 				<label class="block">
-					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.docUrls')} *</span>
-					<textarea class="input" rows="3" bind:value={docUrls} placeholder={t('keys.docUrlsPh')}></textarea>
+					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(transport)} *</span>
+					<textarea class="input" rows="3" bind:value={docUrls} placeholder={t('keys.docUrlsPhYandex')}></textarea>
 				</label>
 			{:else}
 				<label class="block">
-					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.docUrl')} *</span>
-					<input class="input" bind:value={docUrl} placeholder={t('keys.docUrlPh')} />
+					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(transport)} *</span>
+					<input class="input" bind:value={docUrl} placeholder={docPlaceholderFor(transport)} />
 				</label>
 			{/if}
 			<label class="block">
@@ -348,11 +464,7 @@
 				<input type="checkbox" class="h-4 w-4" bind:checked={e2eEncryption} />
 				<span class="text-xs font-medium text-[var(--of-muted)]">{t('keys.e2e')}</span>
 			</label>
-			<label class="block sm:col-span-2 lg:col-span-2">
-				<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.owner')}</span>
-				<input class="input" bind:value={ownerRef} placeholder={t('keys.ownerPh')} />
-			</label>
-			<div class="flex items-end sm:col-span-2 lg:col-span-2">
+			<div class="flex items-end sm:col-span-2 lg:col-span-4">
 				<Button type="submit" variant="primary" disabled={creating} class="w-full">
 					<Plus class="h-4 w-4" />
 					{creating ? t('generic.loading') : t('keys.create')}
@@ -460,9 +572,9 @@
 											<ToggleRight class="h-4 w-4" />
 										</button>
 									{/if}
-									<button type="button" class="of-iconbtn" title={t('keys.setLimit')} onclick={() => openLimit(k)}>
-										<Pencil class="h-4 w-4" />
-									</button>
+								<button type="button" class="of-iconbtn" title={t('keys.edit')} onclick={() => openEdit(k)}>
+									<Pencil class="h-4 w-4" />
+								</button>
 									<button
 										type="button"
 										class="of-iconbtn {k.FinalExitNodeID ? '!text-[var(--of-accent)]' : ''}"
@@ -511,6 +623,65 @@
 			</div>
 		</div>
 	</Card>
+
+	<!-- Edit modal -->
+	<Modal open={!!editKey} title={t('keys.editTitle')} onClose={() => (editKey = null)}>
+		<div class="space-y-3">
+			<label class="block">
+				<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.label')}</span>
+				<input class="input" bind:value={editLabel} placeholder={t('keys.labelPh')} />
+			</label>
+			<label class="block">
+				<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.transport')}</span>
+				<select class="input" bind:value={editTransport}>
+					<option value="yandex">yandex</option>
+					<option value="yandex_multistream">yandex_multistream</option>
+					<option value="boards">boards</option>
+					<option value="mailru">mailru</option>
+					<option value="mts">mts</option>
+					<option value="direct">direct</option>
+				</select>
+			</label>
+			{#if editIsMultistream}
+				<label class="block">
+					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(editTransport)} *</span>
+					<textarea class="input" rows="3" bind:value={editDocUrls} placeholder={t('keys.docUrlsPhYandex')}></textarea>
+				</label>
+			{:else}
+				<label class="block">
+					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(editTransport)} *</span>
+					<input class="input" bind:value={editDocUrl} placeholder={docPlaceholderFor(editTransport)} />
+				</label>
+			{/if}
+			<label class="block">
+				<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.limitGb')}</span>
+				<input class="input" type="number" min="0" step="0.1" bind:value={editLimitGb} />
+			</label>
+			<label class="flex items-center gap-2">
+				<input type="checkbox" class="h-4 w-4" bind:checked={editE2e} />
+				<span class="text-xs font-medium text-[var(--of-muted)]">{t('keys.e2e')}</span>
+			</label>
+			<label class="flex items-center gap-2">
+				<input type="checkbox" class="h-4 w-4" bind:checked={editEnabled} />
+				<span class="text-xs font-medium text-[var(--of-muted)]">{t('keys.editEnabled')}</span>
+			</label>
+			<p class="text-xs text-[var(--of-muted)]">{t('keys.editRestartHint')}</p>
+		</div>
+		{#if editError}
+			<p class="mt-3 flex items-center gap-1.5 text-sm text-[var(--of-danger)]">
+				<AlertCircle class="h-4 w-4" />
+				{editError}
+			</p>
+		{/if}
+		{#snippet footer()}
+			<Button size="sm" onclick={() => (editKey = null)} disabled={editBusy}>
+				{t('generic.cancel')}
+			</Button>
+			<Button size="sm" variant="primary" onclick={saveEdit} disabled={editBusy}>
+				{editBusy ? t('generic.loading') : t('generic.save')}
+			</Button>
+		{/snippet}
+	</Modal>
 
 	<!-- Limit modal -->
 	<Modal

@@ -73,3 +73,10 @@ type UsageDay struct {
 	BytesReceived  int64
 	ActiveKeyCount int // distinct keys that used traffic that day
 }
+
+// NodeKeyCookie is one key's cookie jar as handed to the node that runs it.
+type NodeKeyCookie struct {
+	KeyID      string
+	Transport  string
+	CookiesEnc []byte
+}

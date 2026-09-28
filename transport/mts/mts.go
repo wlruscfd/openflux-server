@@ -65,6 +65,18 @@ type mtsInfo struct {
 	temporary  bool
 	accessTok  string
 	guestName  string
+	pageOrigin string
+}
+
+// pageOriginFor keeps the transport on the host the share link actually points at: boards are
+// served from both my.mts-link.ru and doski.mts-link.ru, and a UID is only meaningful on its own
+// host - asking the other one for it answers 400.
+func pageOriginFor(docURL string) string {
+	u, err := url.Parse(strings.TrimSpace(docURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return mtsOrigin
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 type mtsSession struct {
@@ -344,6 +356,7 @@ func jsBoolField(html, name string) bool {
 }
 
 func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
+	pageOrigin := pageOriginFor(t.url)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
 		Jar:     jar,
@@ -355,7 +368,7 @@ func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 		},
 	}
 
-	pageURL := fmt.Sprintf("%s/boards/board/%s", mtsOrigin, boardUID)
+	pageURL := fmt.Sprintf("%s/boards/board/%s", pageOrigin, boardUID)
 	req, err := http.NewRequest("GET", pageURL, nil)
 	if err != nil {
 		return mtsInfo{}, err
@@ -375,17 +388,18 @@ func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 	html := string(body)
 
 	info := mtsInfo{
-		boardUID:  boardUID,
-		token:     jsStringField(html, "token"),
-		clientUID: jsStringField(html, "clientUID"),
-		prefix:    jsStringField(html, "fePrefix"),
-		signature: jsStringField(html, "signature"),
-		appDomain: jsStringField(html, "appDomain"),
-		wsDomain:  jsStringField(html, "wsDomain"),
-		reserveWs: jsStringField(html, "reserveWsDomain"),
-		accessTok: jsStringField(html, "boardAccessToken"),
-		temporary: jsBoolField(html, "temporary"),
-		guestName: randomGuestName(),
+		boardUID:   boardUID,
+		token:      jsStringField(html, "token"),
+		clientUID:  jsStringField(html, "clientUID"),
+		prefix:     jsStringField(html, "fePrefix"),
+		signature:  jsStringField(html, "signature"),
+		appDomain:  jsStringField(html, "appDomain"),
+		wsDomain:   jsStringField(html, "wsDomain"),
+		reserveWs:  jsStringField(html, "reserveWsDomain"),
+		accessTok:  jsStringField(html, "boardAccessToken"),
+		temporary:  jsBoolField(html, "temporary"),
+		guestName:  randomGuestName(),
+		pageOrigin: pageOrigin,
 	}
 	if info.boardUID == "" {
 		if m := uuidRe.FindString(html); m != "" {
@@ -438,8 +452,8 @@ func (t *Transport) fetchPods(client *http.Client, info mtsInfo) (podInfo, error
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "ru")
-	req.Header.Set("Origin", mtsOrigin)
-	req.Header.Set("Referer", fmt.Sprintf("%s/boards/board/%s", mtsOrigin, info.boardUID))
+	req.Header.Set("Origin", info.pageOrigin)
+	req.Header.Set("Referer", fmt.Sprintf("%s/boards/board/%s", info.pageOrigin, info.boardUID))
 	resp, err := client.Do(req)
 	if err != nil {
 		return podInfo{}, err
@@ -604,7 +618,7 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 
 	header := http.Header{}
 	header.Set("User-Agent", mtsUA)
-	header.Set("Origin", mtsOrigin)
+	header.Set("Origin", info.pageOrigin)
 	header.Set("Accept-Language", "ru")
 
 	dialer := websocket.Dialer{
