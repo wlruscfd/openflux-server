@@ -528,7 +528,9 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		trans = transport.NewCompressedTransport(mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig()))
 	case "mts":
-		trans = mts.NewTransport(k.DocURL, transport.DefaultConfig())
+		mtsTrans := mts.NewTransport(k.DocURL, transport.DefaultConfig())
+		mtsTrans.SetPacketTrace(true)
+		trans = transport.NewCompressedTransport(mtsTrans)
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
@@ -544,9 +546,6 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			o.ports.release(portIdx)
 		}
 		return nil, err
-	}
-	if mt, ok := trans.(*mts.Transport); ok && k.Transport == "mts" {
-		mt.SetPacketTrace(true)
 	}
 	tun := tunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
 	if k.Transport == "mts" {
