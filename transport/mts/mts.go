@@ -303,23 +303,24 @@ func (t *Transport) writerLoop() {
 
 		if len(batch) < t.batchCount && size < t.batchBytes {
 			timer := time.NewTimer(mtsLinger)
-		lingerLoop:
+			select {
+			case p := <-t.out:
+				add(p)
+			case <-timer.C:
+			case <-t.done:
+				timer.Stop()
+				return
+			}
+			timer.Stop()
+		drainAgain:
 			for len(batch) < t.batchCount && size < t.batchBytes {
 				select {
 				case p := <-t.out:
 					add(p)
-					if !timer.Stop() {
-						<-timer.C
-					}
-					timer.Reset(mtsLinger)
-				case <-timer.C:
-					break lingerLoop
-				case <-t.done:
-					timer.Stop()
-					return
+				default:
+					break drainAgain
 				}
 			}
-			timer.Stop()
 		}
 
 		if len(batch) == 0 {
