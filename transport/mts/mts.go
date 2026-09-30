@@ -111,6 +111,9 @@ type Transport struct {
 	wakeMu   sync.Mutex
 	wakeChan chan struct{}
 
+	forceChan  chan struct{}
+	stashReady chan struct{}
+
 	out     chan []byte
 	started atomic.Bool
 
@@ -167,6 +170,8 @@ func (t *Transport) Start() error {
 
 	t.closeOnce = sync.Once{}
 	t.done = make(chan struct{})
+	t.forceChan = make(chan struct{}, 1)
+	t.stashReady = make(chan struct{}, 1)
 	utils.SafeGo("mts.writer", t.writerLoop)
 	utils.SafeGo("mts.connect", func() { t.connectLoop(boardUID) })
 	return nil
@@ -182,6 +187,10 @@ func (t *Transport) Stop() error {
 }
 
 func (t *Transport) ForceReconnect() {
+	select {
+	case t.forceChan <- struct{}{}:
+	default:
+	}
 	if s := t.session.Load(); s != nil && s.Conn != nil {
 		s.Conn.Close()
 		return
@@ -267,6 +276,7 @@ func (t *Transport) writerLoop() {
 			return
 		case p := <-t.out:
 			add(p)
+		case <-t.stashReady:
 		}
 
 		t.stashMu.Lock()
@@ -683,6 +693,7 @@ func (t *Transport) connectAndServe(attempt int, info mtsInfo) (bool, error) {
 		select {
 		case <-t.done:
 			return false, nil
+		case <-t.forceChan:
 		case <-time.After(time.Second):
 		}
 	}
@@ -727,6 +738,10 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 
 	t.SetConnected(true)
 	t.EmitEvent(transport.EventConnected, strconv.Itoa(attempt+1))
+	select {
+	case t.stashReady <- struct{}{}:
+	default:
+	}
 
 	kaStop := make(chan struct{})
 	utils.SafeGo("mts.ping", func() { t.pingLoop(sess, kaStop) })
