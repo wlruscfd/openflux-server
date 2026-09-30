@@ -135,10 +135,10 @@ func solveCaptchaDepth(docURL string, jar http.CookieJar, userAgent string, rt h
 		form.Set("version", "1.5.0")
 		form.Set("uniquekey", ssr.UniqueKey)
 		form.Set("chstate", "ok")
-		form.Set("fingerprint", encodeCaptchaFingerprint(buildLegacyCaptchaFingerprint(nonceHex, ssr.UniqueKey, ssr.Timestamp, elapsed)))
+		form.Set("fingerprint", encodeCaptchaFingerprint(buildLegacyCaptchaFingerprint(nonceHex, ssr.UniqueKey, elapsed)))
 	} else {
-		form.Set("rdata", encodeCaptchaJSON(buildCaptchaFingerprint(nonceHex, userAgent, ssr.UniqueKey)))
-		form.Set("pdata", encodeCaptchaPoWData(ssr.PowPrefix, nonceHex, calcTime, ssr.Timestamp))
+		form.Set("rdata", encodeCaptchaJSON(buildCaptchaFingerprint(nonceHex, userAgent)))
+		form.Set("pdata", encodeCaptchaPoWData(ssr.PowPrefix, nonceHex, calcTime))
 		form.Set("tdata", "")
 		form.Set("picasso", "")
 	}
@@ -427,7 +427,7 @@ func captchaCheckComplexity(hash []byte, complexity int) bool {
 	return hash[fullBytes]&mask == 0
 }
 
-func buildLegacyCaptchaFingerprint(nonceHex, uniqueKey string, timestamp int64, elapsed time.Duration) map[string]interface{} {
+func buildLegacyCaptchaFingerprint(nonceHex, uniqueKey string, elapsed time.Duration) map[string]interface{} {
 	end := float64(elapsed.Milliseconds())
 	return map[string]interface{}{
 		"start": 0.0,
@@ -441,11 +441,10 @@ func buildLegacyCaptchaFingerprint(nonceHex, uniqueKey string, timestamp int64, 
 		},
 		"version":   "1.8.2",
 		"uniqueKey": uniqueKey,
-		"timestamp": timestamp,
 	}
 }
 
-func buildCaptchaFingerprint(nonceHex, userAgent, uniqueKey string) map[string]interface{} {
+func buildCaptchaFingerprint(nonceHex, userAgent string) map[string]interface{} {
 	return map[string]interface{}{
 		"b6": 8, "b7": 8, "b9": []string{"en-US", "en"},
 		"c2": "", "c4": "MacIntel", "c5": []interface{}{}, "c9": userAgent,
@@ -479,9 +478,8 @@ func buildCaptchaFingerprint(nonceHex, userAgent, uniqueKey string) map[string]i
 			"cA": []interface{}{}, "p": []interface{}{}, "sP": []interface{}{},
 			"e": []interface{}{}, "eP": []interface{}{},
 		},
-		"m10":       nonceHex,
-		"uniqueKey": uniqueKey,
-		"version":   "1.5.0",
+		"m10":     nonceHex,
+		"version": "1.5.0",
 	}
 }
 
@@ -490,13 +488,12 @@ func encodeCaptchaJSON(value interface{}) string {
 	return base64.StdEncoding.EncodeToString(raw)
 }
 
-func encodeCaptchaPoWData(prefix, nonce string, calcTime, timestamp int64) string {
+func encodeCaptchaPoWData(prefix, nonce string, calcTime int64) string {
 	return encodeCaptchaJSON(struct {
 		PowNonce    string `json:"powNonce"`
 		PowCalcTime int64  `json:"powCalcTime"`
 		PowPrefix   string `json:"powPrefix"`
-		Timestamp   int64  `json:"timestamp"`
-	}{nonce, calcTime, prefix, timestamp})
+	}{nonce, calcTime, prefix})
 }
 
 func encodeCaptchaFingerprint(fp map[string]interface{}) string {
