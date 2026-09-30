@@ -152,24 +152,13 @@ type YandexDocsTransport struct {
 type CaptchaSolveMode string
 
 const (
-	CaptchaSolveModeOff             CaptchaSolveMode = ""
-	CaptchaSolveModeNative          CaptchaSolveMode = "native"
-	CaptchaSolveModeHeadlessBrowser CaptchaSolveMode = "headless_browser"
-	CaptchaSolveModeExternal        CaptchaSolveMode = "external"
+	CaptchaSolveModeOff      CaptchaSolveMode = ""
+	CaptchaSolveModeNative   CaptchaSolveMode = "native"
+	CaptchaSolveModeExternal CaptchaSolveMode = "external"
 )
 
 func (t *YandexDocsTransport) SetCaptchaSolveMode(mode CaptchaSolveMode) {
 	t.captchaSolveMode = mode
-}
-
-func (t *YandexDocsTransport) tryHeadlessSolve(docURL string) {
-	cookies, err := SolveCaptcha(docURL)
-	if err != nil {
-		t.debugf("headless captcha solve failed, falling back to the normal cooldown: %v", err)
-		return
-	}
-	t.debugf("headless captcha solve succeeded, forcing a reconnect")
-	t.ProvideCookies(cookies)
 }
 
 func (t *YandexDocsTransport) debugf(format string, args ...interface{}) {
@@ -431,9 +420,6 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 					t.debugf("captcha cookies changed during fetch, retrying soon")
 					t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, cookieRetryFloor)
 					return
-				}
-				if t.captchaSolveMode == CaptchaSolveModeHeadlessBrowser {
-					go t.tryHeadlessSolve(t.url)
 				}
 				t.scheduleReconnectWithMinDelay(attempt, reasonCaptchaBlocked, err, captchaCooldown)
 			} else {
@@ -1112,9 +1098,6 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 		captchaAttempts++
 		t.debugf("captcha challenge detected, solving via PoW")
 		t.EmitEvent(transport.EventCaptchaRequired, url)
-		if t.captchaSolveMode == CaptchaSolveModeExternal || t.captchaSolveMode == CaptchaSolveModeOff {
-			return errCaptchaBlocked
-		}
 		if t.captchaSolveMode != CaptchaSolveModeNative {
 			return errCaptchaBlocked
 		}
