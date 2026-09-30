@@ -289,11 +289,13 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		return boardsInfo{}, fmt.Errorf("request-guest-token: %w", err)
 	}
 
-	var redirect struct {
-		Redirect string `json:"redirect"`
+	var apiErr struct {
+		Error struct {
+			Description string `json:"description"`
+		} `json:"error"`
 	}
-	if err := json.Unmarshal(tokenResp, &redirect); err == nil && redirect.Redirect != "" {
-		t.followGuestTokenRedirect(client, redirect.Redirect, hash)
+	if err := json.Unmarshal(tokenResp, &apiErr); err == nil && apiErr.Error.Description != "" {
+		return boardsInfo{}, fmt.Errorf("request-guest-token: %s", apiErr.Error.Description)
 	}
 
 	u, _ := url.Parse("https://" + boardsBase)
@@ -389,38 +391,6 @@ func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, cont
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body[:n]))
 	}
 	return body, nil
-}
-
-// followGuestTokenRedirect exists because request-guest-token stopped setting the token_<hash>
-// cookie directly - it now returns {"redirect": "..."} and the cookie only shows up once that
-// URL (and whatever redirect chain it leads to) is actually fetched.
-func (t *BoardsTransport) followGuestTokenRedirect(client *http.Client, target, hash string) {
-	current := target
-	for i := 0; i < 5 && current != ""; i++ {
-		req, err := http.NewRequest("GET", current, nil)
-		if err != nil {
-			return
-		}
-		req.Header.Set("User-Agent", boardsUA)
-		req.Header.Set("Referer", "https://"+boardsBase+"/guest/?hash="+hash)
-		resp, err := client.Do(req)
-		if err != nil {
-			return
-		}
-		resp.Body.Close()
-		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
-			return
-		}
-		loc := resp.Header.Get("Location")
-		if loc == "" {
-			return
-		}
-		next, err := resp.Request.URL.Parse(loc)
-		if err != nil {
-			return
-		}
-		current = next.String()
-	}
 }
 
 func (t *BoardsTransport) getWhiteboardInfo(client *http.Client, hash string) (map[string]string, error) {
