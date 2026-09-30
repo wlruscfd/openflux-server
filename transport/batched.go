@@ -45,13 +45,21 @@ func envInt(name string, def int) int {
 }
 
 func NewBatchedTransport(inner Transport) *BatchedTransport {
+	maxBytes := envInt("OPENFLUX_BATCH_BYTES", defaultMaxBatchBytes)
+	if maxBytes > maxFrameBytes {
+		maxBytes = maxFrameBytes
+	}
+	maxCount := envInt("OPENFLUX_BATCH_COUNT", defaultMaxBatchCount)
+	if maxCount > maxFrameRecords {
+		maxCount = maxFrameRecords
+	}
 	return &BatchedTransport{
 		Transport:     inner,
 		queue:         make(chan []byte, batchQueueDepth),
 		stop:          make(chan struct{}),
 		lingerMs:      envInt("OPENFLUX_BATCH_LINGER_MS", defaultLingerMs),
-		maxBatchBytes: envInt("OPENFLUX_BATCH_BYTES", defaultMaxBatchBytes),
-		maxBatchCount: envInt("OPENFLUX_BATCH_COUNT", defaultMaxBatchCount),
+		maxBatchBytes: maxBytes,
+		maxBatchCount: maxCount,
 	}
 }
 
@@ -141,12 +149,10 @@ func (b *BatchedTransport) flushLoop() {
 		linger:
 			for size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
 				select {
-				case p, ok := <-b.queue:
-					if !ok {
-						timer.Stop()
-						b.Transport.Send(EncodeBatch(batch))
-						return
-					}
+				case <-b.stop:
+					timer.Stop()
+					return
+				case p := <-b.queue:
 					batch = append(batch, p)
 					size += 2 + len(p)
 				case <-timer.C:

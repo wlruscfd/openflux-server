@@ -61,6 +61,7 @@ type worker struct {
 	transportName string
 	docURLs       []string
 	e2e           bool
+	token         string
 	cookieHash    string
 
 	lastSent uint64
@@ -72,6 +73,9 @@ type worker struct {
 // one until the node itself restarted, which looks like the edit was silently ignored.
 func (w *worker) driftedFrom(k RemoteKey) bool {
 	if w.transportName != k.Transport || w.docURL != k.DocURL || w.e2e != k.E2EEncryption {
+		return true
+	}
+	if w.e2e && w.token != k.Token {
 		return true
 	}
 	if len(w.docURLs) != len(k.DocURLs) {
@@ -229,6 +233,7 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 
 	o.mu.Lock()
 	targets := make([]struct {
+		id   string
 		w    *worker
 		hash string
 		jar  string
@@ -244,14 +249,22 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 		}
 		w.cookieHash = hash
 		targets = append(targets, struct {
+			id   string
 			w    *worker
 			hash string
 			jar  string
-		}{w: w, hash: hash, jar: j.Cookies})
+		}{id: id, w: w, hash: hash, jar: j.Cookies})
 	}
 	o.mu.Unlock()
 
 	for _, t := range targets {
+		o.mu.Lock()
+		current, stillActive := o.workers[t.id]
+		o.mu.Unlock()
+		if !stillActive || current != t.w {
+			utils.Debugf("[NODEAGENT] worker for key %s no longer active, dropping uploaded cookies", t.id)
+			continue
+		}
 		provider, ok := t.w.trans.(cookieProvider)
 		if !ok {
 			utils.Debugf("[NODEAGENT] transport for key cannot accept cookies, skipping")
@@ -462,6 +475,7 @@ func (o *Orchestrator) startRelayBridgeWorker(k RemoteKey) (*worker, error) {
 		trans:         yd,
 		relayTo:       relay,
 		docURL:        k.DocURL,
+		token:         k.Token,
 		portIdx:       -1,
 		transportName: k.Transport,
 		docURLs:       append([]string(nil), k.DocURLs...),
@@ -528,6 +542,12 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		trans = transport.NewCompressedTransport(mailru.NewMailruDocsTransport(k.DocURL, transport.DefaultConfig()))
 	case "mts":
+		if k.E2EEncryption {
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, fmt.Errorf("key %s: mts transport doesn't support e2e_encryption yet", k.ID)
+		}
 		trans = newMTSExitTransport(k.DocURL)
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
@@ -560,6 +580,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		transportName: k.Transport,
 		docURLs:       append([]string(nil), k.DocURLs...),
 		e2e:           k.E2EEncryption,
+		token:         k.Token,
 	}, nil
 }
 

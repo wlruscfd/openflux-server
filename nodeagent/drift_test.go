@@ -44,16 +44,21 @@ func TestWorkerDriftDetectsEveryPanelEditThatChangesTheTransport(t *testing.T) {
 	}
 }
 
-func TestWorkerDriftIgnoresReorderedIdenticalDocURLs(t *testing.T) {
+func TestWorkerDriftDetectsReorderedDocURLs(t *testing.T) {
 	urls := []string{"https://example/a", "https://example/b"}
 	w := &worker{
 		docURL:        "https://example/main",
 		transportName: "yandex_multistream",
 		docURLs:       append([]string(nil), urls...),
 	}
-	same := RemoteKey{ID: "k", Transport: "yandex_multistream", DocURL: "https://example/main", DocURLs: urls}
+	same := RemoteKey{ID: "k", Transport: "yandex_multistream", DocURL: "https://example/main", DocURLs: append([]string(nil), urls...)}
 	if w.driftedFrom(same) {
 		t.Error("identical doc_urls in the same order must not count as drift")
+	}
+
+	reordered := RemoteKey{ID: "k", Transport: "yandex_multistream", DocURL: "https://example/main", DocURLs: []string{urls[1], urls[0]}}
+	if !w.driftedFrom(reordered) {
+		t.Error("a reordered doc_urls list must restart the worker - stream index i must keep naming the same document on both ends")
 	}
 
 	shortened := RemoteKey{ID: "k", Transport: "yandex_multistream", DocURL: "https://example/main", DocURLs: urls[:1]}
