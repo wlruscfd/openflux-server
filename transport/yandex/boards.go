@@ -283,9 +283,17 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		}
 	}
 
-	if err := t.postAPI(client, hash, "request-guest-token",
-		map[string]string{"name": name, "hash": hash}); err != nil {
+	tokenResp, err := t.postAPI(client, hash, "request-guest-token",
+		map[string]string{"name": name, "hash": hash})
+	if err != nil {
 		return boardsInfo{}, fmt.Errorf("request-guest-token: %w", err)
+	}
+
+	var redirect struct {
+		Redirect string `json:"redirect"`
+	}
+	if err := json.Unmarshal(tokenResp, &redirect); err == nil && redirect.Redirect != "" {
+		t.followGuestTokenRedirect(client, redirect.Redirect, hash)
 	}
 
 	u, _ := url.Parse("https://" + boardsBase)
@@ -343,10 +351,10 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 	}, nil
 }
 
-func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, content interface{}) error {
+func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, content interface{}) ([]byte, error) {
 	raw, err := json.Marshal(content)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	contentB64 := base64.StdEncoding.EncodeToString(raw)
 	payload, err := json.Marshal(map[string]string{
@@ -354,12 +362,12 @@ func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, cont
 		"content": contentB64,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	req, err := http.NewRequest("POST", "https://"+boardsBase+"/api", bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", boardsUA)
 	req.Header.Set("Content-Type", "application/json")
@@ -369,18 +377,50 @@ func (t *BoardsTransport) postAPI(client *http.Client, hash, action string, cont
 	req.Header.Set("Origin", "https://"+boardsBase)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
 		n := len(body)
 		if n > 200 {
 			n = 200
 		}
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body[:n]))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body[:n]))
 	}
-	return nil
+	return body, nil
+}
+
+// followGuestTokenRedirect exists because request-guest-token stopped setting the token_<hash>
+// cookie directly - it now returns {"redirect": "..."} and the cookie only shows up once that
+// URL (and whatever redirect chain it leads to) is actually fetched.
+func (t *BoardsTransport) followGuestTokenRedirect(client *http.Client, target, hash string) {
+	current := target
+	for i := 0; i < 5 && current != ""; i++ {
+		req, err := http.NewRequest("GET", current, nil)
+		if err != nil {
+			return
+		}
+		req.Header.Set("User-Agent", boardsUA)
+		req.Header.Set("Referer", "https://"+boardsBase+"/guest/?hash="+hash)
+		resp, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		resp.Body.Close()
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+			return
+		}
+		loc := resp.Header.Get("Location")
+		if loc == "" {
+			return
+		}
+		next, err := resp.Request.URL.Parse(loc)
+		if err != nil {
+			return
+		}
+		current = next.String()
+	}
 }
 
 func (t *BoardsTransport) getWhiteboardInfo(client *http.Client, hash string) (map[string]string, error) {
