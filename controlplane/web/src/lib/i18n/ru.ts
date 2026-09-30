@@ -61,6 +61,7 @@ export const ru = {
 	'keys.docUrlMts': 'Ссылка на MTS Link Доски',
 	'keys.docUrlPhMts': 'https://my.mts-link.ru/boards/board/…',
 	'keys.docUrlDirect': 'Ссылка (для direct не нужна)',
+	'keys.docUrlPhDirect': '(не используется для direct)',
 
 	// dashboard
 	'dash.overview': 'Обзор системы',

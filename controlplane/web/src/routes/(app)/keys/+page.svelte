@@ -337,7 +337,6 @@
 					return;
 				}
 				body.doc_urls = parsed;
-				body.doc_url = '';
 			} else {
 				if (!editDocUrl.trim()) {
 					editError = docLabelFor(editTransport);

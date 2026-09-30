@@ -63,6 +63,7 @@ export const en: Dict = {
 	'keys.docUrlMts': 'MTS Link Boards link',
 	'keys.docUrlPhMts': 'https://my.mts-link.ru/boards/board/…',
 	'keys.docUrlDirect': 'Link (direct transport needs none)',
+	'keys.docUrlPhDirect': '(not used by direct)',
 
 	// dashboard
 	'dash.overview': 'System overview',

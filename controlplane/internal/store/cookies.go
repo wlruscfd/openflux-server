@@ -42,6 +42,14 @@ func (s *Store) DeleteKeyCookies(ctx context.Context, keyID string) error {
 
 // KeyCookieStatus is what admin surfaces: never the jar itself, only whether one is set.
 func (s *Store) KeyCookieStatus(ctx context.Context, keyID string) (bool, *time.Time, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM keys WHERE id = $1 AND deleted_at IS NULL)`, keyID).Scan(&exists); err != nil {
+		return false, nil, fmt.Errorf("key cookie status: %w", err)
+	}
+	if !exists {
+		return false, nil, ErrNotFound
+	}
+
 	var updated *time.Time
 	err := s.pool.QueryRow(ctx, `SELECT updated_at FROM key_cookies WHERE key_id = $1`, keyID).Scan(&updated)
 	if errors.Is(err, pgx.ErrNoRows) {

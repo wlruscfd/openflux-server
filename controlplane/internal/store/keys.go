@@ -278,6 +278,11 @@ func (s *Store) HasEnabledKeyWithAnyDocURL(ctx context.Context, urls []string, e
 // ErrDocURLInUse is returned when another enabled key already claims a doc URL, discovered inside the same transaction as the write so it can't lose a race against a concurrent check.
 var ErrDocURLInUse = errors.New("doc_url already in use by another enabled key")
 
+// ErrMultistreamNeedsTwoDocURLs mirrors the check CreateKeyGuarded's caller already applies at creation time.
+var ErrMultistreamNeedsTwoDocURLs = errors.New("yandex_multistream needs 2+ doc_urls")
+
+const transportYandexMultistream = "yandex_multistream"
+
 // docURLLockKeys sorts URLs so two calls with overlapping sets always acquire their shared locks in the same order and can never deadlock waiting on each other.
 func docURLLockKeys(urls []string) []int64 {
 	seen := make(map[int64]bool, len(urls))
@@ -537,9 +542,32 @@ func (s *Store) UpdateKeyGuarded(ctx context.Context, id string, p UpdateKeyPara
 		return model.Key{}, err
 	}
 
+	effectiveTransport := current.Transport
+	if p.Transport != nil {
+		effectiveTransport = *p.Transport
+	}
+	if effectiveTransport == transportYandexMultistream {
+		effectiveDocURLs := current.DocURLs
+		if p.DocURLs != nil {
+			effectiveDocURLs = *p.DocURLs
+		}
+		if len(effectiveDocURLs) < 2 {
+			return model.Key{}, ErrMultistreamNeedsTwoDocURLs
+		}
+		if p.DocURLs != nil && p.DocURL == nil && current.DocURL != "" {
+			empty := ""
+			p.DocURL = &empty
+		}
+	} else if p.DocURL != nil && p.DocURLs == nil && len(current.DocURLs) > 0 {
+		empty := []string(nil)
+		p.DocURLs = &empty
+	}
+
 	lockSet := p.urlSet()
 	if p.docURLsTouched() {
-		lockSet = append(lockSet, current.DocURL)
+		if current.DocURL != "" {
+			lockSet = append(lockSet, current.DocURL)
+		}
 		lockSet = append(lockSet, current.DocURLs...)
 	}
 	if err := lockDocURLs(ctx, tx, lockSet); err != nil {
@@ -583,6 +611,7 @@ func getKeyByIDTx(ctx context.Context, tx pgx.Tx, id string) (model.Key, error) 
 }
 
 // DeleteKey soft-deletes: the row (and its lifetime usage totals) stays for the panel's charts, since every other Store method already treats deleted_at IS NOT NULL as "doesn't exist".
+// The cookie jar has no such reason to survive - it's dropped outright so a deleted key's captcha session doesn't linger in the database forever.
 func (s *Store) DeleteKey(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE keys SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
@@ -590,6 +619,9 @@ func (s *Store) DeleteKey(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := s.DeleteKeyCookies(ctx, id); err != nil {
+		return err
 	}
 	return nil
 }

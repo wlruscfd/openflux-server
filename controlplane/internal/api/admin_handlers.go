@@ -349,6 +349,9 @@ func (a *App) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrDocURLInUse):
 		writeError(w, http.StatusConflict, "doc_url is already used by another enabled key - each key needs its own document")
 		return
+	case errors.Is(err, store.ErrMultistreamNeedsTwoDocURLs):
+		writeError(w, http.StatusBadRequest, "doc_urls needs 2+ entries for transport=yandex_multistream")
+		return
 	case errors.Is(err, store.ErrNoFinalExitAddress):
 		writeError(w, http.StatusConflict, "that node has no public_address set yet - add one before using it as a final exit")
 		return
