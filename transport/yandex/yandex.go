@@ -258,10 +258,14 @@ func solveCaptchaIsolated(docURL string, jar http.CookieJar, userAgent string, r
 		return err
 	}
 	temp.SetCookies(parsed, jar.Cookies(parsed))
-	if _, err := solveCaptcha(docURL, temp, userAgent, rt); err != nil {
+	acceptedURL, err := solveCaptcha(docURL, temp, userAgent, rt)
+	if err != nil {
 		return err
 	}
 	jar.SetCookies(parsed, temp.Cookies(parsed))
+	if accepted, perr := neturl.Parse(acceptedURL); perr == nil && accepted.Host != parsed.Host {
+		jar.SetCookies(accepted, temp.Cookies(accepted))
+	}
 	return nil
 }
 

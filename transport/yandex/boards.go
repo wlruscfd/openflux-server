@@ -314,8 +314,9 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		for i, c := range cookies {
 			parts[i] = c.Name + "=" + c.Value
 		}
+		fresh := strings.Join(parts, "; ")
 		t.cookiesMu.Lock()
-		t.providedCookies = strings.Join(parts, "; ")
+		t.providedCookies = mergeCookieHeaders(fresh, t.providedCookies)
 		t.cookiesMu.Unlock()
 	}
 

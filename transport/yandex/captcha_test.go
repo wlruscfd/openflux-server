@@ -197,8 +197,8 @@ func TestLiveNativeCaptcha(t *testing.T) {
 }
 
 func TestLegacyFingerprintUsesCurrentSchema(t *testing.T) {
-	fingerprint := buildLegacyCaptchaFingerprint("00112233", "u-1", 10)
-	if fingerprint["version"] != "1.8.2" || fingerprint["uniqueKey"] != "u-1" {
+	fingerprint := buildLegacyCaptchaFingerprint("00112233", "u-1", 1700000000, 10)
+	if fingerprint["version"] != "1.8.2" || fingerprint["uniqueKey"] != "u-1" || fingerprint["timestamp"] != int64(1700000000) {
 		t.Fatalf("unexpected fingerprint metadata: %+v", fingerprint)
 	}
 	factors := fingerprint["factors"].(map[string]interface{})
