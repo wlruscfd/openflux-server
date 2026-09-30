@@ -306,6 +306,9 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 		}
 	}
 	if jwt == "" {
+		if state, werr := t.getWhiteboardInfo(client, hash); werr == nil && state["error_description"] != "" {
+			return boardsInfo{}, fmt.Errorf("request-guest-token: %s", state["error_description"])
+		}
 		return boardsInfo{}, fmt.Errorf("token_%s not found", hash)
 	}
 	payload := jwtPayload(jwt)
@@ -441,11 +444,17 @@ func (t *BoardsTransport) getWhiteboardInfo(client *http.Client, hash string) (m
 		SocketServers []struct {
 			IP string `json:"ip"`
 		} `json:"socket_servers"`
+		Error struct {
+			Description string `json:"description"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, err
 	}
 	out := map[string]string{}
+	if info.Error.Description != "" {
+		out["error_description"] = info.Error.Description
+	}
 	if info.Presentation.Properties.CurrentSlide != "" {
 		out["current_slide"] = info.Presentation.Properties.CurrentSlide
 		out["dashboard"] = info.Presentation.Properties.CurrentSlide
