@@ -135,7 +135,7 @@ func main() {
 	case "mailru":
 		trans = wrapCodec(mailru.NewMailruDocsTransport(globalDocUrl, config))
 	case "mts":
-		trans = mts.NewTransport(globalDocUrl, config)
+		trans = transport.NewCompressedTransport(mts.NewTransport(globalDocUrl, config))
 	case "yandex_multistream":
 		urls := strings.Split(*docUrls, ",")
 		if len(urls) < 2 {

@@ -293,24 +293,23 @@ func (t *Transport) writerLoop() {
 
 		if len(batch) < t.batchCount && size < t.batchBytes {
 			timer := time.NewTimer(mtsLinger)
-			select {
-			case p := <-t.out:
-				add(p)
-			case <-timer.C:
-			case <-t.done:
-				timer.Stop()
-				return
-			}
-			timer.Stop()
-		drainAgain:
+		lingerLoop:
 			for len(batch) < t.batchCount && size < t.batchBytes {
 				select {
 				case p := <-t.out:
 					add(p)
-				default:
-					break drainAgain
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(mtsLinger)
+				case <-timer.C:
+					break lingerLoop
+				case <-t.done:
+					timer.Stop()
+					return
 				}
 			}
+			timer.Stop()
 		}
 
 		if len(batch) == 0 {
@@ -517,14 +516,15 @@ type podInfo struct {
 }
 
 func (t *Transport) fetchPods(client *http.Client, info mtsInfo) (podInfo, error) {
+	fallback := podInfo{pod: "1", reservePod: "1"}
 	payload, err := json.Marshal(map[string]string{"boardUID": info.boardUID})
 	if err != nil {
-		return podInfo{}, err
+		return fallback, err
 	}
 	u := "https://" + strings.TrimSuffix(info.appDomain, "/") + "/api/v2/board/pod/get"
 	req, err := http.NewRequest("POST", u, bytes.NewReader(payload))
 	if err != nil {
-		return podInfo{}, err
+		return fallback, err
 	}
 	req.Header.Set("User-Agent", mtsUA)
 	req.Header.Set("Content-Type", "application/json")
@@ -534,12 +534,12 @@ func (t *Transport) fetchPods(client *http.Client, info mtsInfo) (podInfo, error
 	req.Header.Set("Referer", fmt.Sprintf("%s/boards/board/%s", info.pageOrigin, info.boardUID))
 	resp, err := client.Do(req)
 	if err != nil {
-		return podInfo{}, err
+		return fallback, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != 200 {
-		return podInfo{}, fmt.Errorf("pod status %d", resp.StatusCode)
+		return fallback, fmt.Errorf("pod status %d", resp.StatusCode)
 	}
 	var out struct {
 		Status     string `json:"status"`
@@ -547,10 +547,10 @@ func (t *Transport) fetchPods(client *http.Client, info mtsInfo) (podInfo, error
 		ReservePod string `json:"reservePod"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return podInfo{}, err
+		return fallback, err
 	}
 	if out.Status != "success" && out.Pod == "" {
-		return podInfo{}, fmt.Errorf("pod status %q", out.Status)
+		return fallback, fmt.Errorf("pod status %q", out.Status)
 	}
 	if out.Pod == "" {
 		out.Pod = "1"
