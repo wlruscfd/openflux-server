@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -155,6 +156,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 	}
 
 	utils.Debugf("[M-DOCS] connectToDoc attempt %d", attempt)
+	t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
 
 	go func() {
 		defer func() {
@@ -177,7 +179,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		info, err := t.fetchDocInfo(t.weblink)
 		if err != nil {
 			utils.Debugf("[M-DOCS] fetchDocInfo failed: %v", err)
-			t.scheduleReconnect(attempt)
+			t.scheduleReconnect(attempt, "fetch_failed", err)
 			return
 		}
 
@@ -197,7 +199,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				status = resp.StatusCode
 			}
 			utils.Debugf("[M-DOCS] WebSocket dial failed (http %d): %v", status, err)
-			t.scheduleReconnect(attempt)
+			t.scheduleReconnect(attempt, "dial_failed", err)
 			return
 		}
 		utils.Debugf("[M-DOCS] WebSocket connected")
@@ -282,7 +284,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				if time.Since(connectedAt) > 15*time.Second {
 					next = -1
 				}
-				t.scheduleReconnect(next)
+				t.scheduleReconnect(next, "read_failed", err)
 				return
 			}
 			t.handleMessage(session, message)
@@ -404,13 +406,15 @@ func (t *MailruDocsTransport) extractBase64String(response string) string {
 	return ""
 }
 
-func (t *MailruDocsTransport) scheduleReconnect(attempt int) {
+func (t *MailruDocsTransport) scheduleReconnect(attempt int, reasonCode string, cause error) {
 	next := attempt + 1
 	if !t.IsRunning() || next >= t.GetConfig().MaxReconnectAttempts {
 		return
 	}
 
 	d := reconnectBackoff(next)
+	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
+	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", next+1, int(d.Seconds()), reasonCode, causeText))
 	utils.Debugf("[M-DOCS] reconnecting in %v (attempt %d)", d, next)
 	time.Sleep(d)
 	if !t.IsRunning() {
