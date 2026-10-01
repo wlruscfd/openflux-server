@@ -3,6 +3,7 @@ package deployssh
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -167,6 +168,10 @@ func Deploy(target SSHTarget, opts DeployOptions, cb Callback) error {
 	select {
 	case err := <-done:
 		if err != nil {
+			var exitMissing *ssh.ExitMissingError
+			if errors.As(err, &exitMissing) {
+				return fmt.Errorf("install.sh failed: the SSH connection was dropped before it finished (often the VPS's own package manager restarting a service mid-install, or a network blip) - check the server with `journalctl -u openflux-controlplane` and retry; install.sh is safe to re-run: %w", err)
+			}
 			return fmt.Errorf("install.sh failed: %w", err)
 		}
 		return nil
