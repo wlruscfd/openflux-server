@@ -48,6 +48,11 @@ async function proxy(req, res) {
 		}
 		headers.set('content-length', String(body.byteLength));
 		headers.set('x-forwarded-proto', url.protocol.replace(':', ''));
+		const peer = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+		if (peer && peer !== '127.0.0.1' && peer !== '::1') {
+			headers.set('x-real-ip', peer);
+			headers.delete('x-forwarded-for');
+		}
 
 		const resUpstream = await fetch(`${UPSTREAM}${url.pathname}${url.search}`, {
 			method: req.method,

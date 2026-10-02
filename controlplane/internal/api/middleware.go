@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,7 +107,18 @@ func (a *App) withRateLimit(next http.HandlerFunc) http.HandlerFunc {
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if peer == nil || !peer.IsLoopback() {
+		return host
+	}
+	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(real) != nil {
+		return real
+	}
+	first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-For"), ",")
+	if first = strings.TrimSpace(first); net.ParseIP(first) != nil {
+		return first
 	}
 	return host
 }
