@@ -104,6 +104,8 @@ type Orchestrator struct {
 	workers          map[string]*worker
 	relayExitWorkers map[string]*relayExitWorker
 	ports            portAllocator
+	lastSummaryAt    time.Time
+	warnedAt         map[string]time.Time
 }
 
 func NewOrchestrator(cfg Config) *Orchestrator {
@@ -267,10 +269,10 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 		}
 		provider, ok := t.w.trans.(cookieProvider)
 		if !ok {
-			utils.Debugf("[NODEAGENT] transport for key cannot accept cookies, skipping")
+			log.Printf("[NODEAGENT] key %s (%s): a cookie jar was uploaded but this transport cannot use it", t.id, t.w.transportName)
 			continue
 		}
-		utils.Debugf("[NODEAGENT] applying uploaded cookies (%d bytes) and dropping session", len(t.jar))
+		log.Printf("[NODEAGENT] key %s (%s): applying the uploaded cookie jar (%d bytes) and reconnecting", t.id, t.w.transportName, len(t.jar))
 		provider.ProvideCookies(t.jar)
 		t.w.trans.ForceReconnect()
 	}
@@ -287,7 +289,7 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 
 	keys, err := o.client.ListKeys(ctx)
 	if err != nil {
-		utils.Debugf("[NODEAGENT] list keys failed: %v", err)
+		o.warnThrottled("list-keys", "[NODEAGENT] cannot fetch keys from the controlplane (%s): %v", o.cfg.ControlURL, err)
 		return
 	}
 
@@ -350,12 +352,13 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 			}
 			continue
 		}
-		utils.Debugf("[NODEAGENT] started worker for key %s", k.ID)
+		log.Printf("[NODEAGENT] key %s (%s): worker started", k.ID, k.Transport)
 
 		o.mu.Lock()
 		o.workers[k.ID] = w
 		o.mu.Unlock()
 	}
+	o.logSummary()
 }
 
 // reconcileRelayExits is the final-exit half of a cascade, polled on the same tick as the regular
@@ -559,6 +562,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	default:
 		trans = wrapStream(yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig()), 0, false)
 	}
+	trans.SetEventCallback(keyEventLogger(k.ID, k.Transport))
 	if err := trans.Start(); err != nil {
 		if portIdx >= 0 {
 			o.ports.release(portIdx)
