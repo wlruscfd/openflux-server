@@ -17,7 +17,7 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
 	"github.com/p1neappleXpress/OpenFlux/transport/mts"
 	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
-	"github.com/p1neappleXpress/OpenFlux/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
@@ -27,7 +27,7 @@ type Config struct {
 	PollInterval    time.Duration
 	UsageInterval   time.Duration
 	HeartbeatPeriod time.Duration
-	ExitMode        tunnel.ExitMode
+	ExitMode        nodetunnel.ExitMode
 	// PortRangeSize: raw mode's outbound ports per key - trades keys-per-node against connections-per-key; 0 = DefaultPortRangeSize.
 	PortRangeSize    int
 	CaptchaSolveMode yandex.CaptchaSolveMode
@@ -42,18 +42,18 @@ func DefaultConfig(controlURL, nodeToken string) Config {
 		PollInterval:     20 * time.Second,
 		UsageInterval:    20 * time.Second,
 		HeartbeatPeriod:  60 * time.Second,
-		ExitMode:         tunnel.ExitModeRaw,
+		ExitMode:         nodetunnel.ExitModeRaw,
 		PortRangeSize:    DefaultPortRangeSize,
 		CaptchaSolveMode: yandex.CaptchaSolveModeOff,
 	}
 }
 
-// worker is normally a client-facing (Yandex) transport paired with its own raw/proxy exit tunnel.
+// worker is normally a client-facing (Yandex) transport paired with its own raw/proxy exit nodetunnel.
 // For a cascaded key, tun is nil and relayTo holds the UDP link to the final-exit node instead - trans
 // still means the Yandex side, so usage accounting (based on trans.Stats()) is unaffected either way.
 type worker struct {
 	trans   transport.Transport
-	tun     *tunnel.TCPTunnel
+	tun     *nodetunnel.TCPTunnel
 	relayTo transport.Transport
 	docURL  string
 	portIdx int
@@ -92,7 +92,7 @@ func (w *worker) driftedFrom(k RemoteKey) bool {
 // relayExitWorker is the other half of a cascade: it never talks to Yandex at all, just accepts the entry node's relayed traffic and runs a normal raw/proxy exit for it.
 type relayExitWorker struct {
 	trans   transport.Transport
-	tun     *tunnel.TCPTunnel
+	tun     *nodetunnel.TCPTunnel
 	portIdx int
 }
 
@@ -274,7 +274,7 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 		}
 		log.Printf("[NODEAGENT] key %s (%s): applying the uploaded cookie jar (%d bytes) and reconnecting", t.id, t.w.transportName, len(t.jar))
 		provider.ProvideCookies(t.jar)
-		t.w.trans.ForceReconnect()
+		transport.ForceReconnect(t.w.trans)
 	}
 }
 
@@ -345,7 +345,7 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		w, err := o.startWorker(k)
 		if err != nil {
 			// Port-range exhaustion is logged unconditionally (not gated behind --debug) since it otherwise fails silently, the same way, every poll cycle.
-			if o.cfg.ExitMode == tunnel.ExitModeRaw && strings.Contains(err.Error(), "no port range capacity") {
+			if o.cfg.ExitMode == nodetunnel.ExitModeRaw && strings.Contains(err.Error(), "no port range capacity") {
 				log.Printf("[NODEAGENT] key %s not started: %v - this node has reached its concurrent-key ceiling (raise it with --port-range-size, or run another node)", k.ID, err)
 			} else {
 				utils.Debugf("[NODEAGENT] failed to start worker for key %s: %v", k.ID, err)
@@ -407,7 +407,7 @@ func (o *Orchestrator) reconcileRelayExits(ctx context.Context) {
 func (o *Orchestrator) startRelayExitWorker(k RelayExitKey) (*relayExitWorker, error) {
 	portIdx := -1
 	var portStart, portEnd uint16
-	if o.cfg.ExitMode == tunnel.ExitModeRaw {
+	if o.cfg.ExitMode == nodetunnel.ExitModeRaw {
 		var ok bool
 		portIdx, portStart, portEnd, ok = o.ports.alloc()
 		if !ok {
@@ -423,7 +423,7 @@ func (o *Orchestrator) startRelayExitWorker(k RelayExitKey) (*relayExitWorker, e
 		return nil, fmt.Errorf("start relay listener: %w", err)
 	}
 
-	tun := tunnel.NewTCPTunnelMode(relay, true, o.cfg.ExitMode)
+	tun := nodetunnel.NewTCPTunnelMode(relay, true, o.cfg.ExitMode)
 	if portIdx >= 0 {
 		tun.SetPortRange(portStart, portEnd)
 	}
@@ -494,7 +494,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	// Raw mode needs a disjoint port range per worker (see TCPTunnel.SetPortRange); proxy mode's plain net.Dial needs no such reservation.
 	portIdx := -1
 	var portStart, portEnd uint16
-	if o.cfg.ExitMode == tunnel.ExitModeRaw {
+	if o.cfg.ExitMode == nodetunnel.ExitModeRaw {
 		var ok bool
 		portIdx, portStart, portEnd, ok = o.ports.alloc()
 		if !ok {
@@ -562,14 +562,14 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	default:
 		trans = wrapStream(yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig()), 0, false)
 	}
-	trans.SetEventCallback(keyEventLogger(k.ID, k.Transport))
+	transport.SetEventCallback(trans, keyEventLogger(k.ID, k.Transport))
 	if err := trans.Start(); err != nil {
 		if portIdx >= 0 {
 			o.ports.release(portIdx)
 		}
 		return nil, err
 	}
-	tun := tunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
+	tun := nodetunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
 	if k.Transport == "mts" {
 		tun.SetPacketTrace(true)
 	}

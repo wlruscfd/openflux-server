@@ -2,7 +2,6 @@ package oneme
 
 import (
 	"fmt"
-
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
@@ -67,6 +66,7 @@ func (t *OneMeTransport) Start() error {
 
 	utils.Debugf("configured dc inbound")
 	t.ch.dcInbound = func(data []byte) {
+		t.b.RecordReceive(len(data))
 		t.b.CallReceive(data)
 	}
 	t.b.EmitEvent(transport.EventConnected, "1")
@@ -84,5 +84,6 @@ func (t *OneMeTransport) IsConnected() bool {
 
 func (t *OneMeTransport) Send(data []byte) error {
 	t.ch.Send(data)
+	t.b.RecordSend(len(data))
 	return nil
 }

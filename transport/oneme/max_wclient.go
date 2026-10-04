@@ -41,7 +41,6 @@ func (c *MaxClient) Connect() error {
 func (c *MaxClient) SetEventCallback(cb func(MaxPacket)) { c.onEvent = cb }
 
 func (c *MaxClient) readLoop() {
-	// An unrecovered panic here kills the whole exit-node process, every other key's transport included.
 	defer func() {
 		if r := recover(); r != nil {
 			logError("recovered in MaxClient.readLoop: %v", r)

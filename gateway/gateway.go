@@ -20,7 +20,7 @@ import (
 	"gvisor.dev/gvisor/pkg/waiter"
 
 	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
@@ -34,7 +34,7 @@ const udpIdleTimeout = 60 * time.Second
 
 const gatewayNIC = tcpip.NICID(1)
 
-// Server runs a gvisor stack in transparent-proxy mode; any IPv6 (unregistered) is left unhandled, failing closed rather than leaking outside the tunnel.
+// Server runs a gvisor stack in transparent-proxy mode; any IPv6 (unregistered) is left unhandled, failing closed rather than leaking outside the nodetunnel.
 type Server struct {
 	dialer               Dialer
 	dnsUpstreamCfg       dnsUpstreamConfig
@@ -46,7 +46,7 @@ type Server struct {
 	directResolvers []string
 
 	gvisorStack *stack.Stack
-	linkEP      *tunnel.TunnelLinkEndpoint
+	linkEP      *nodetunnel.TunnelLinkEndpoint
 	closed      atomic.Bool
 	mtu         uint32
 }
@@ -102,7 +102,7 @@ func (s *Server) Start(tunReader io.Reader, tunWriter io.Writer) error {
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
 	})
 
-	linkEP := tunnel.NewTunnelLinkEndpoint()
+	linkEP := nodetunnel.NewTunnelLinkEndpoint()
 	if s.mtu > 0 {
 		linkEP.SetMTU(s.mtu)
 	}
@@ -251,7 +251,7 @@ func (s *Server) relayDirect(localConn net.Conn, dest string) {
 	wg.Wait()
 }
 
-// shouldBypassConnection checks SNI, destination IP, and the DNS cache's reverse mapping; ambiguity always resolves toward the tunnel.
+// shouldBypassConnection checks SNI, destination IP, and the DNS cache's reverse mapping; ambiguity always resolves toward the nodetunnel.
 func (s *Server) shouldBypassConnection(peeked []byte, dest string) bool {
 	var candidates []string
 	if domain := sniServerName(peeked); domain != "" {

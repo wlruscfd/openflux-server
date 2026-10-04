@@ -1,112 +1,108 @@
 package transport
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
-type pipeTransport struct {
-	Transport
-	peer *pipeTransport
-	cb   func([]byte)
+type testTransport struct {
+	receiver func([]byte)
+	sent     []byte
 }
 
-func (p *pipeTransport) Send(data []byte) error {
-	if p.peer != nil && p.peer.cb != nil {
-		p.peer.cb(data)
+func (t *testTransport) Start() error                  { return nil }
+func (t *testTransport) Stop() error                   { return nil }
+func (t *testTransport) IsConnected() bool             { return true }
+func (t *testTransport) Stats() TransportStats         { return TransportStats{} }
+func (t *testTransport) Receive(callback func([]byte)) { t.receiver = callback }
+func (t *testTransport) Send(data []byte) error        { t.sent = append([]byte(nil), data...); return nil }
+func (t *testTransport) deliver(data []byte) {
+	if t.receiver != nil {
+		t.receiver(data)
 	}
-	return nil
-}
-
-func (p *pipeTransport) Receive(callback func([]byte)) { p.cb = callback }
-
-func newPipe() (a, b *pipeTransport) {
-	a, b = &pipeTransport{}, &pipeTransport{}
-	a.peer, b.peer = b, a
-	return
 }
 
 func TestEncryptedTransportRoundTrip(t *testing.T) {
-	rawA, rawB := newPipe()
-	client := NewEncryptedTransport(rawA, "shared-secret-token", false)
-	node := NewEncryptedTransport(rawB, "shared-secret-token", true)
-
-	var gotAtNode, gotAtClient []byte
-	node.Receive(func(d []byte) { gotAtNode = d })
-	client.Receive(func(d []byte) { gotAtClient = d })
-
-	if err := client.Send([]byte("hello from client")); err != nil {
-		t.Fatalf("client.Send: %v", err)
+	clientWire := &testTransport{}
+	exitWire := &testTransport{}
+	client, err := NewEncryptedTransport(clientWire, "a sufficiently long shared secret", "document", false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if string(gotAtNode) != "hello from client" {
-		t.Errorf("node received %q, want %q", gotAtNode, "hello from client")
+	exitNode, err := NewEncryptedTransport(exitWire, "a sufficiently long shared secret", "document", true)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if err := node.Send([]byte("hello from node")); err != nil {
-		t.Fatalf("node.Send: %v", err)
-	}
-	if string(gotAtClient) != "hello from node" {
-		t.Errorf("client received %q, want %q", gotAtClient, "hello from node")
-	}
-}
-
-func TestEncryptedTransportManyPacketsInOrder(t *testing.T) {
-	rawA, rawB := newPipe()
-	client := NewEncryptedTransport(rawA, "shared-secret-token", false)
-	node := NewEncryptedTransport(rawB, "shared-secret-token", true)
-
-	var got [][]byte
-	node.Receive(func(d []byte) { got = append(got, append([]byte(nil), d...)) })
-
-	for i := 0; i < 50; i++ {
-		if err := client.Send([]byte{byte(i)}); err != nil {
-			t.Fatalf("Send #%d: %v", i, err)
-		}
-	}
-	if len(got) != 50 {
-		t.Fatalf("got %d packets, want 50", len(got))
-	}
-	for i, p := range got {
-		if len(p) != 1 || p[0] != byte(i) {
-			t.Errorf("packet %d = %v, want [%d]", i, p, i)
-		}
-	}
-}
-
-func TestEncryptedTransportWrongTokenFailsToDecrypt(t *testing.T) {
-	rawA, rawB := newPipe()
-	node := NewEncryptedTransport(rawA, "token-one", true)
-	client := NewEncryptedTransport(rawB, "token-two", false)
-
+	want := []byte("private IPv4 packet")
 	var got []byte
-	client.Receive(func(d []byte) { got = d })
-	node.Send([]byte("secret"))
+	exitNode.Receive(func(data []byte) { got = append([]byte(nil), data...) })
+	if err := client.Send(want); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(clientWire.sent, want) {
+		t.Fatal("ciphertext contains plaintext")
+	}
+	exitWire.deliver(clientWire.sent)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("received %q, want %q", got, want)
+	}
 
-	if got != nil {
-		t.Errorf("decrypted with the wrong token: %v", got)
+	reply := []byte("private response")
+	got = nil
+	client.Receive(func(data []byte) { got = append([]byte(nil), data...) })
+	if err := exitNode.Send(reply); err != nil {
+		t.Fatal(err)
+	}
+	clientWire.deliver(exitWire.sent)
+	if !bytes.Equal(got, reply) {
+		t.Fatalf("received %q, want %q", got, reply)
 	}
 }
 
-// An old app build never wraps its transport in EncryptedTransport, so unable-to-decrypt here means the two ends disagree about e2e_encryption - dropping instead of passing through makes the setting mandatory.
-func TestEncryptedTransportExitNodeDropsUnencryptedPeer(t *testing.T) {
-	rawA, rawB := newPipe()
-	node := NewEncryptedTransport(rawA, "shared-secret-token", true)
+func TestEncryptedTransportRejectsWrongKeyTamperingAndReplay(t *testing.T) {
+	wire := &testTransport{}
+	client, err := NewEncryptedTransport(wire, "first sufficiently long secret", "document", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Send([]byte("packet")); err != nil {
+		t.Fatal(err)
+	}
 
-	var got []byte
-	node.Receive(func(d []byte) { got = d })
-	rawB.Send([]byte("plaintext from a client that isn't encrypting"))
+	wrongWire := &testTransport{}
+	wrongExit, err := NewEncryptedTransport(wrongWire, "other sufficiently long secret", "document", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	wrongExit.Receive(func([]byte) { called++ })
+	wrongWire.deliver(wire.sent)
+	if called != 0 {
+		t.Fatal("wrong key was accepted")
+	}
 
-	if got != nil {
-		t.Errorf("got %q, want the unencrypted packet dropped", got)
+	rightWire := &testTransport{}
+	rightExit, err := NewEncryptedTransport(rightWire, "first sufficiently long secret", "document", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightExit.Receive(func([]byte) { called++ })
+	tampered := append([]byte(nil), wire.sent...)
+	tampered[len(tampered)-1] ^= 1
+	rightWire.deliver(tampered)
+	if called != 0 {
+		t.Fatal("tampered packet was accepted")
+	}
+	rightWire.deliver(wire.sent)
+	rightWire.deliver(wire.sent)
+	if called != 1 {
+		t.Fatalf("replayed packet delivered %d times, want 1", called)
 	}
 }
 
-func TestEncryptedTransportDirectionKeysDiffer(t *testing.T) {
-	inner, _ := newPipe()
-	client := NewEncryptedTransport(inner, "shared-secret-token", false)
-	node := NewEncryptedTransport(inner, "shared-secret-token", true)
-
-	if client.send == node.send {
-		t.Errorf("client and node ended up with the same send key")
-	}
-	if client.send != node.recv || client.recv != node.send {
-		t.Errorf("client/node send-recv keys don't line up: client.send=%v node.recv=%v", client.send, node.recv)
+func TestEncryptedTransportRequiresStrongSecret(t *testing.T) {
+	if _, err := NewEncryptedTransport(&testTransport{}, "too short", "document", false); err == nil {
+		t.Fatal("short secret was accepted")
 	}
 }

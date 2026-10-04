@@ -3,6 +3,10 @@ set -e
 
 OUTPUT_DIR="output/ios"
 LIBRARY_NAME="liboflux"
+# Paths are this checkout's, whatever the caller's directory: an app that
+# links the core as a submodule runs core/build_ios.sh from its own root.
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+OUT="$ROOT/$OUTPUT_DIR/$LIBRARY_NAME.a"
 
 # Paths configuration
 XCODE_PATH="${XCODE_PATH:-/Applications/Xcode.app}"
@@ -10,8 +14,9 @@ DEVELOPER_DIR="$XCODE_PATH/Contents/Developer"
 SDK_PATH="$DEVELOPER_DIR/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
 CLANG="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
 
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$ROOT/$OUTPUT_DIR"
 
+# Verify paths
 if [ ! -d "$SDK_PATH" ]; then
     echo "SDK not found: $SDK_PATH"
     exit 1
@@ -22,6 +27,7 @@ if [ ! -f "$CLANG" ]; then
     exit 1
 fi
 
+# Build environment
 export GOARCH=arm64
 export GOOS=ios
 export CGO_ENABLED=1
@@ -33,36 +39,22 @@ export CGO_LDFLAGS="-isysroot $SDK_PATH -arch arm64 -miphoneos-version-min=13.0"
 
 echo "Building for iOS (arm64)..."
 
-if go build \
+# Build static library
+# The iOS C API lives in mobile/ios, on package mobile: the same Session,
+# context rule, codec and link handling as the Android library. An app
+# that links this checkout as a submodule gets exactly this core.
+if (cd "$ROOT/mobile" && go build \
     -buildmode=c-archive \
-    -ldflags="-s -w" \
+    -tags ios \
+    -ldflags="-w" \
     -trimpath \
-    -o "$OUTPUT_DIR/$LIBRARY_NAME.a" \
-    . ; then
-
-    if [ ! -f "$OUTPUT_DIR/$LIBRARY_NAME.h" ]; then
-        cat > "$OUTPUT_DIR/$LIBRARY_NAME.h" << 'HEADEREOF'
-#ifndef LIBTUNNEL_H
-#define LIBTUNNEL_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void RunMain(void);
-void RunMainClient(char* url);
-void RunMainExitNode(void);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* LIBTUNNEL_H */
-HEADEREOF
-    fi
+    -o "$OUT" \
+    ./ios) ; then
     
-    echo "Build complete: $OUTPUT_DIR/$LIBRARY_NAME.a"
-    ls -lh "$OUTPUT_DIR/$LIBRARY_NAME.a"
+    # Header liboflux.h is generated automatically by cgo from //export directives.
+    
+    echo "Build complete: $OUT"
+    ls -lh "$OUT"
     
 else
     echo "Build failed"

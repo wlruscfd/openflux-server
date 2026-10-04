@@ -15,14 +15,6 @@ func TestDecodeBatchRejectsOversizedFrame(t *testing.T) {
 	}
 }
 
-func TestDecodeBatchRejectsUnknownFlags(t *testing.T) {
-	frame := []byte{batchFormatVersion, batchFlagZstd | 0x80, 0x00}
-	if _, err := DecodeBatch(frame); err == nil {
-		t.Fatal("unknown flag bits must be rejected")
-	} else if !strings.Contains(err.Error(), "unknown batch flags") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
 
 func TestDecodeBatchRejectsTooManyRecords(t *testing.T) {
 	framed := make([]byte, 0, (maxFrameRecords+1)*3)

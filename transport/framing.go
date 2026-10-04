@@ -7,15 +7,22 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// Wire format for a batched frame: [0]version [1]flags(bit0=zstd) [2:]sequence of [2-byte length][packet] records, optionally zstd-compressed as a whole.
+// Wire format for a batched frame (one Yandex/transport message can now carry
+// many tunnel packets):
+//
+//	[0]   version byte (batchFormatVersion)
+//	[1]   flags (bit0 = payload is zstd-compressed)
+//	[2:]  payload: a sequence of [2-byte big-endian length][packet] records,
+//	      optionally zstd-compressed as a whole.
+//
+// Only wire-v2 frames are accepted. The retired wire-v3 prototype is gone:
+// capability negotiation now lives in NegotiatedTransport (transport/negotiated.go),
+// inside the authenticated envelope.
 const (
 	batchFormatVersion = 0x02
 	batchFlagZstd      = 0x01
-	// maxFrameBytes/maxFrameRecords bound what a peer can make us allocate: a document is a
-	// shared channel, so a malformed or hostile frame must not be able to turn into unbounded
-	// memory or an unbounded record slice. Both limits sit far above what any sender produces.
-	maxFrameBytes   = 1 << 20
-	maxFrameRecords = 1024
+	maxFrameBytes      = 1 << 20
+	maxFrameRecords    = 1024
 )
 
 var (
@@ -57,7 +64,9 @@ func frameBatch(pkts [][]byte) []byte {
 	return out
 }
 
-func EncodeBatch(pkts [][]byte) []byte {
+// encodeBatch serializes packets into a single wire-v2 frame, compressing
+// the whole batch with zstd only when that actually shrinks it.
+func encodeBatch(pkts [][]byte) []byte {
 	framed := frameBatch(pkts)
 	compressed := zstdEnc.EncodeAll(framed, nil)
 
@@ -73,14 +82,11 @@ func EncodeBatch(pkts [][]byte) []byte {
 	return append(out, framed...)
 }
 
-func IsBatchFrame(data []byte) bool {
-	return len(data) >= 2 && data[0] == batchFormatVersion
-}
-
-// DecodeBatch reverses EncodeBatch, returning the original packets.
-func DecodeBatch(data []byte) ([][]byte, error) {
+// decodeBatch reverses encodeBatch, returning the original packets.
+// Only wire-v2 frames are accepted; anything else is rejected.
+func decodeBatch(data []byte) ([][]byte, error) {
 	if len(data) > maxFrameBytes+2 {
-		return nil, fmt.Errorf("batch frame exceeds size limit: %d bytes", len(data))
+		return nil, fmt.Errorf("batch frame exceeds size limit")
 	}
 	if len(data) < 2 {
 		return nil, fmt.Errorf("batch frame too short: %d bytes", len(data))
@@ -89,7 +95,7 @@ func DecodeBatch(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("unknown batch version 0x%02x", data[0])
 	}
 	flags := data[1]
-	if flags&^byte(batchFlagZstd) != 0 {
+	if flags & ^byte(batchFlagZstd) != 0 {
 		return nil, fmt.Errorf("unknown batch flags 0x%02x", flags)
 	}
 	payload := data[2:]
@@ -103,13 +109,13 @@ func DecodeBatch(data []byte) ([][]byte, error) {
 		}
 	}
 	if len(framed) > maxFrameBytes {
-		return nil, fmt.Errorf("decoded batch exceeds size limit: %d bytes", len(framed))
+		return nil, fmt.Errorf("decoded batch exceeds size limit")
 	}
 
 	var pkts [][]byte
 	for len(framed) > 0 {
 		if len(pkts) >= maxFrameRecords {
-			return nil, fmt.Errorf("batch exceeds record limit of %d", maxFrameRecords)
+			return nil, fmt.Errorf("batch exceeds record limit")
 		}
 		if len(framed) < 2 {
 			return nil, fmt.Errorf("truncated length prefix")

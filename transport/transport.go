@@ -22,9 +22,26 @@ type Transport interface {
 	Receive(callback func([]byte))
 	IsConnected() bool
 	Stats() TransportStats
+}
+
+type EventSource interface {
 	SetEventCallback(fn func(code, detail string))
-	// ForceReconnect lets a caller that already knows the connection is dead (a network-change callback) trigger an immediate retry instead of waiting for read/write to notice.
+}
+
+type Reconnector interface {
 	ForceReconnect()
+}
+
+func SetEventCallback(t Transport, fn func(code, detail string)) {
+	if e, ok := t.(EventSource); ok {
+		e.SetEventCallback(fn)
+	}
+}
+
+func ForceReconnect(t Transport) {
+	if r, ok := t.(Reconnector); ok {
+		r.ForceReconnect()
+	}
 }
 
 type CookieProvider interface {
@@ -73,16 +90,24 @@ type BaseTransport struct {
 	Mu              sync.RWMutex
 
 	reconnectAttempts atomic.Int32
+
+	// done is closed by Stop. Subclasses can select on Done() to
+	// interrupt sleeps and backoff loops.
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 func NewBaseTransport(config TransportConfig) *BaseTransport {
 	return &BaseTransport{
 		config:    config,
 		startTime: time.Now(),
+		done:      make(chan struct{}),
 	}
 }
 
 func (b *BaseTransport) Start() error {
+	b.doneOnce = sync.Once{}
+	b.done = make(chan struct{})
 	b.running.Store(1)
 	b.startTime = time.Now()
 	return nil
@@ -91,7 +116,23 @@ func (b *BaseTransport) Start() error {
 func (b *BaseTransport) Stop() error {
 	b.running.Store(0)
 	b.connected.Store(0)
+	if b.done != nil {
+		b.doneOnce.Do(func() { close(b.done) })
+	}
 	return nil
+}
+
+// Done returns a channel that closes when the transport is stopped.
+// Subclasses and callers can select on it to interrupt sleeps.
+func (b *BaseTransport) Done() <-chan struct{} {
+	b.Mu.RLock()
+	d := b.done
+	b.Mu.RUnlock()
+	if d == nil {
+		// Never started; return a channel that blocks forever.
+		return make(chan struct{})
+	}
+	return d
 }
 
 func (b *BaseTransport) IsRunning() bool {
