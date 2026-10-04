@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -17,6 +18,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -147,6 +149,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 	}
 
 	utils.Debugf("[M-DOCS] connectToDoc attempt %d", attempt)
+	t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
 
 	go func() {
 		defer func() {
@@ -172,7 +175,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			if utils.Throttled("m-docs.fetch", time.Minute) {
 				utils.Infof("[M-DOCS] cannot open the document: %v; retrying", err)
 			}
-			t.scheduleReconnect(attempt)
+			t.scheduleReconnect(attempt, "fetch_failed", err)
 			return
 		}
 
@@ -195,7 +198,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				status = resp.StatusCode
 			}
 			utils.Debugf("[M-DOCS] WebSocket dial failed (http %d): %v", status, err)
-			t.scheduleReconnect(attempt)
+			t.scheduleReconnect(attempt, "dial_failed", err)
 			return
 		}
 		utils.Debugf("[M-DOCS] WebSocket connected")
@@ -216,6 +219,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		t.session = session
 		t.SetConnected(true)
 		t.Mu.Unlock()
+		t.EmitEvent(transport.EventConnected, "")
 
 		if existingSession == nil {
 			utils.SafeGo("mailru.writer", t.writerLoop)
@@ -286,7 +290,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				if time.Since(connectedAt) > 15*time.Second {
 					next = -1
 				}
-				t.scheduleReconnect(next)
+				t.scheduleReconnect(next, "read_failed", err)
 				return
 			}
 			t.handleMessage(session, message)
@@ -413,13 +417,16 @@ func cursorPayloads(text string) []string {
 	return out
 }
 
-func (t *MailruDocsTransport) scheduleReconnect(attempt int) {
+func (t *MailruDocsTransport) scheduleReconnect(attempt int, reasonCode string, cause error) {
 	next := attempt + 1
 	if !t.IsRunning() || next >= t.GetConfig().MaxReconnectAttempts {
 		return
 	}
 
 	d := reconnectBackoff(next)
+	causeText := strings.ReplaceAll(cause.Error(), "
+", " ")
+	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", next+1, int(d.Seconds()), reasonCode, causeText))
 	utils.Debugf("[M-DOCS] reconnecting in %v (attempt %d)", d, next)
 	time.Sleep(d)
 	if !t.IsRunning() {
@@ -600,7 +607,7 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 		_ = session.Conn.Close()
 	}
 	if t.IsRunning() {
-		t.scheduleReconnect(0)
+		t.scheduleReconnect(0, "forced", errors.New("reconnect requested"))
 	}
 	return nil
 }
