@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/transport/mailru"
-	"universal-bypass-tool/transport/mts"
-	"universal-bypass-tool/transport/yandex"
-	"universal-bypass-tool/tunnel"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
+	"github.com/p1neappleXpress/OpenFlux/transport/mts"
+	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
+	"github.com/p1neappleXpress/OpenFlux/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 type Config struct {

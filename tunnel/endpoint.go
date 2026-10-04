@@ -11,8 +11,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 
-	"universal-bypass-tool/network"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/network"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // defaultMTU matches a full Ethernet frame; SetMTU overrides it to match whatever the real path (a mobile network, a constrained TUN device) can actually carry, so gvisor doesn't build segments this link then can't deliver.

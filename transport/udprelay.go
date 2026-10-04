@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // UDPRelayTransport is the fast hop of a cascade (entry node -> final-exit node) - plain, encrypted

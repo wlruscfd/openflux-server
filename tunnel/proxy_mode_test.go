@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 func localNonLoopbackIP() string {

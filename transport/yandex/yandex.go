@@ -26,8 +26,8 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // writerLoop batches queued packets into one length-prefixed blob (Volga's framing) instead of one WS frame per packet, since per-message overhead dominates at higher packet rates.

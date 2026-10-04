@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 func captureLog(t *testing.T) *bytes.Buffer {

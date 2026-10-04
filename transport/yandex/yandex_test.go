@@ -16,7 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // --- Send ---------------------------------------------------------------

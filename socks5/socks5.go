@@ -7,7 +7,7 @@ import (
 	"net"
 	"sync"
 
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 type Dialer interface {

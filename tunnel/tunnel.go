@@ -17,9 +17,9 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 
-	"universal-bypass-tool/network"
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/network"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 type ExitMode int

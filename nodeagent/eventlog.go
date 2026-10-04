@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 const (

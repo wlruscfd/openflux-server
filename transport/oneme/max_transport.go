@@ -3,8 +3,8 @@ package oneme
 import (
 	"fmt"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 type OneMeTransport struct {

@@ -1,4 +1,4 @@
-module universal-bypass-tool
+module github.com/p1neappleXpress/OpenFlux
 
 go 1.26.4
 

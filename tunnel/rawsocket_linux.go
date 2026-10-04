@@ -14,8 +14,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 
-	"universal-bypass-tool/network"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/network"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // rawSocketFwMark tags every packet this process sends via the raw socket - the deploy's iptables RST-drop rule matches on its absence, not on ours (see newRawSocketCore). Must match install.sh's rule exactly.

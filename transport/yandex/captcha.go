@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 func solveCaptcha(docURL string, jar http.CookieJar, userAgent string, rt http.RoundTripper) (string, error) {

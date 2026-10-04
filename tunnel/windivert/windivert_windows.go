@@ -10,8 +10,8 @@ import (
 
 	"github.com/xjasonlyu/windivert-go"
 
-	"universal-bypass-tool/network"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/network"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 const recvBufSize = 65535

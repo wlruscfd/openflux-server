@@ -1,6 +1,6 @@
 package tunnel
 
-import "universal-bypass-tool/network"
+import "github.com/p1neappleXpress/OpenFlux/network"
 
 // rewriteL4Checksum must match across both raw-socket implementations (linux/darwin) and both NAT paths - a packet with a wrong checksum is silently dropped by the receiver.
 func rewriteL4Checksum(l4 []byte, proto byte, srcIP, dstIP [4]byte) {

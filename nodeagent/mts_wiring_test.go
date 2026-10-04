@@ -3,7 +3,7 @@ package nodeagent
 import (
 	"testing"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // The client builds its mts transport through mobile.wrapGeneric, which wraps it in a

@@ -3,9 +3,9 @@ package mobile
 import (
 	"testing"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/transport/oneme"
-	"universal-bypass-tool/transport/yandex"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/oneme"
+	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
 )
 
 func TestBuildTransportManualYandex(t *testing.T) {

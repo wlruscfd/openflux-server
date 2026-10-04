@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 const (

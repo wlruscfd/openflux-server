@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 func TestIsCaptchaURL(t *testing.T) {

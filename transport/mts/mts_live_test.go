@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 func TestLiveGuestCursorRoundTrip(t *testing.T) {

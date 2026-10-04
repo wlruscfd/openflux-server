@@ -10,7 +10,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // EncryptedTransport is strict both ways - anything that doesn't decrypt is dropped - because a lenient auto-detect used to leave e2e_encryption purely advisory when a client silently didn't encrypt.

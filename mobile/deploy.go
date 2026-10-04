@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"universal-bypass-tool/deployssh"
+	"github.com/p1neappleXpress/OpenFlux/deployssh"
 )
 
 // Deploy takes JSON strings rather than gomobile-bound structs: gomobile silently drops any exported function taking a custom struct parameter.

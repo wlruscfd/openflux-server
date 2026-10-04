@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"universal-bypass-tool/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // The one-way mts fault that cost the most time was a client that wrapped its transport in

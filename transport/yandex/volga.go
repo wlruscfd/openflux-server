@@ -21,8 +21,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // VolgaConfig tunes a second, higher-throughput way to speak the same Yandex disguise: batched HTTP POSTs for sending, a WebSocket for receiving; defaults are sized for one mobile client, not the original many-thousand-connection server.
