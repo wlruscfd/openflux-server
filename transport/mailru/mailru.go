@@ -424,8 +424,7 @@ func (t *MailruDocsTransport) scheduleReconnect(attempt int, reasonCode string, 
 	}
 
 	d := reconnectBackoff(next)
-	causeText := strings.ReplaceAll(cause.Error(), "
-", " ")
+	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
 	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", next+1, int(d.Seconds()), reasonCode, causeText))
 	utils.Debugf("[M-DOCS] reconnecting in %v (attempt %d)", d, next)
 	time.Sleep(d)
