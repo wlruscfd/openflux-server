@@ -248,6 +248,7 @@ type YandexDocsTransport struct {
 	peerEncSelfCompress atomic.Bool
 
 	wakeReconnect chan struct{}
+	reconnecting  atomic.Bool
 
 	// tag identifies this instance's log lines on a node running many keys at once - a bare "[YDOCS]" line can't otherwise be traced back to which key it belongs to.
 	tag string
@@ -464,6 +465,7 @@ func (t *YandexDocsTransport) Start() error {
 
 	t.baseUserID = randUserID()
 	go t.keepAliveLoop()
+	utils.SafeGo("yandex.editorActivity", t.editorActivityLoop)
 	t.connectToDoc(0)
 
 	return nil
@@ -1141,6 +1143,10 @@ func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonC
 		return
 	}
 
+	if !t.reconnecting.CompareAndSwap(false, true) {
+		return
+	}
+
 	t.RecordReconnect()
 
 	delay := t.backoffDelay(attempt)
@@ -1176,6 +1182,7 @@ func (t *YandexDocsTransport) scheduleReconnectWithMinDelay(attempt int, reasonC
 		}
 		t.Mu.Unlock()
 	}
+	t.reconnecting.Store(false)
 	if !t.IsRunning() {
 		return
 	}

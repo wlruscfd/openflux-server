@@ -435,8 +435,15 @@ func buildEnv(opts DeployOptions) map[string]string {
 		"NODE_NAME":     opts.NodeName,
 		"NODE_MAX_KEYS": maxKeys,
 		"RUN_NODE_HERE": boolToYN(opts.RunNodeHere),
-		"WEB_PANEL":     "n",
+		"WEB_PANEL":     webPanelFor(opts.TLSMode),
 	}
+}
+
+func webPanelFor(tlsMode string) string {
+	if tlsMode == "http" {
+		return "n"
+	}
+	return "y"
 }
 
 func buildEnvFile(opts DeployOptions) string {

@@ -50,7 +50,7 @@ func TestBuildEnvFileQuotesAndKeepsExplicitNegatives(t *testing.T) {
 		`export ADMIN_TOKEN='adm'\''in'`,
 		"export REGISTER_NODE='n'",
 		"export RUN_NODE_HERE='n'",
-		"export WEB_PANEL='n'",
+		"export WEB_PANEL='y'",
 		"export TLS_MODE='domain'",
 	} {
 		if !strings.Contains(env, want) {
@@ -59,6 +59,12 @@ func TestBuildEnvFileQuotesAndKeepsExplicitNegatives(t *testing.T) {
 	}
 	if strings.Contains(env, "SERVER_IP") {
 		t.Errorf("SERVER_IP is blank in domain mode and should not appear at all:\n%s", env)
+	}
+}
+
+func TestPlainHTTPModeKeepsEmbeddedPanel(t *testing.T) {
+	if env := buildEnvFile(DeployOptions{TLSMode: "http"}); !strings.Contains(env, "export WEB_PANEL='n'") {
+		t.Errorf("http mode serves the controlplane directly and must not ask for the web panel: %s", env)
 	}
 }
 
