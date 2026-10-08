@@ -29,13 +29,6 @@ func logError(format string, args ...interface{}) {
 	fmt.Printf("[ERR] "+format+"\n", args...)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func genUUID() string {
 	b := make([]byte, 16)
 	rand.Read(b)

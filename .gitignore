@@ -63,3 +63,12 @@ openflux
 *.bak
 core.bin
 phpbox_bundle/
+
+# Local scratch for testing against real hosts. These can hold host logins and
+# keys: they must never be committed (keep them out of the tree if you can).
+/deploy_phpbox.py
+/upload_bundle.sh
+/upload_probes.sh
+/probe_*.php
+/stress-out/
+/stresstest/
