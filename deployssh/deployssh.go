@@ -102,7 +102,7 @@ func Deploy(target SSHTarget, opts DeployOptions, cb Callback) error {
 		},
 	}
 
-	addr := fmt.Sprintf("%s:%d", target.Host, target.Port)
+	addr := net.JoinHostPort(target.Host, strconv.Itoa(target.Port))
 	// ssh.Dial leaves TCP keepalive off, so a dead connection could hang silently; the keepalive@openflux goroutine below detects that.
 	tcpConn, err := (&net.Dialer{Timeout: connectTimeout, KeepAlive: tcpKeepAlivePeriod}).Dial("tcp", addr)
 	if err != nil {
