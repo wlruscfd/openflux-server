@@ -12,7 +12,7 @@ type sshTargetJSON struct {
 	Host                    string `json:"host"`
 	Port                    int    `json:"port"`
 	Username                string `json:"username"`
-	AuthMethod              string `json:"auth_method"` // "password" or "key"
+	AuthMethod              string `json:"auth_method"`
 	Password                string `json:"password"`
 	PrivateKeyPEM           string `json:"private_key_pem"`
 	Passphrase              string `json:"passphrase"`
@@ -23,7 +23,7 @@ type deployOptionsJSON struct {
 	DeployScriptURL string `json:"deploy_script_url"`
 	RepoURL         string `json:"repo_url"`
 	GitRef          string `json:"git_ref"`
-	TLSMode         string `json:"tls_mode"` // "domain" or "ip"
+	TLSMode         string `json:"tls_mode"`
 	Domain          string `json:"domain"`
 	Email           string `json:"email"`
 	ServerIP        string `json:"server_ip"`
