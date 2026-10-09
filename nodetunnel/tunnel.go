@@ -118,6 +118,11 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 		utils.Debugf("[TUNNEL] Failed to set min RTO: %v", err)
 	}
 
+	noRecovery := tcpip.TCPRecovery(0)
+	if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &noRecovery); err != nil {
+		utils.Debugf("[TUNNEL] Failed to disable RACK/dup-ack loss detection: %v", err)
+	}
+
 	tunnelEP := NewTunnelLinkEndpoint()
 	tunnelEP.SetOutgoingPacketHandler(func(data []byte) {
 		if t.tracePackets.Load() {
