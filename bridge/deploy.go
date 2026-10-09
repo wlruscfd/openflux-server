@@ -102,3 +102,23 @@ func (a deployCallbackAdapter) OnDeployResult(panelURL, adminToken, nodeToken st
 		a.cb.OnDeployResult(panelURL, adminToken, nodeToken)
 	}
 }
+
+func Diagnose(targetJSON string, cb DeployCallback) error {
+	var target sshTargetJSON
+	if err := json.Unmarshal([]byte(targetJSON), &target); err != nil {
+		return fmt.Errorf("parse target: %w", err)
+	}
+	return deployssh.Diagnose(
+		deployssh.SSHTarget{
+			Host:                    target.Host,
+			Port:                    target.Port,
+			Username:                target.Username,
+			AuthMethod:              target.AuthMethod,
+			Password:                target.Password,
+			PrivateKeyPEM:           target.PrivateKeyPEM,
+			Passphrase:              target.Passphrase,
+			KnownHostKeyFingerprint: target.KnownHostKeyFingerprint,
+		},
+		deployCallbackAdapter{cb},
+	)
+}
