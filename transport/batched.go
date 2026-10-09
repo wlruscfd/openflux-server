@@ -70,6 +70,17 @@ func NewBatchedTransport(inner Transport) *BatchedTransport {
 	return b
 }
 
+func NewBatchedTransportSized(inner Transport, maxBytes, maxCount int) *BatchedTransport {
+	b := NewBatchedTransport(inner)
+	if os.Getenv("OPENFLUX_BATCH_BYTES") == "" {
+		b.maxBatchBytes = min(maxBytes, maxFrameBytes-65537)
+	}
+	if os.Getenv("OPENFLUX_BATCH_COUNT") == "" {
+		b.maxBatchCount = min(maxCount, maxFrameRecords-1)
+	}
+	return b
+}
+
 func (b *BatchedTransport) Start() error {
 	utils.Debugf("[BATCH] Start() called")
 	b.lifecycle.Lock()

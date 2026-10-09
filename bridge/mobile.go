@@ -355,7 +355,7 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		}
 		boards := yandex.NewBoardsTransport(cfg.DocURL, transportConfig)
 		boards.SetCaptchaSolveMode(yandex.CaptchaSolveModeExternal)
-		return wrapBatched(boards, cfg), nil
+		return wrapBoardsBatched(boards, cfg), nil
 	case "mailru":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
@@ -401,6 +401,13 @@ func wrapGeneric(inner transport.Transport, cfg Config) transport.Transport {
 		inner = transport.NewTokenEncryptedTransport(inner, cfg.KeyToken, false)
 	}
 	return transport.NewCompressedTransport(inner)
+}
+
+func wrapBoardsBatched(inner transport.Transport, cfg Config) transport.Transport {
+	if cfg.E2EEncryption && cfg.KeyToken != "" {
+		inner = transport.NewTokenEncryptedTransport(inner, cfg.KeyToken, false)
+	}
+	return yandex.NewBoardsBatched(inner)
 }
 
 func wrapBatched(inner transport.Transport, cfg Config) transport.Transport {

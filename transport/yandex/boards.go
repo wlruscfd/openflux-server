@@ -114,6 +114,15 @@ type BoardsTransport struct {
 	wakeChan chan struct{}
 }
 
+const (
+	BoardsBatchBytes = 128 * 1024
+	BoardsBatchCount = 1000
+)
+
+func NewBoardsBatched(inner transport.Transport) transport.Transport {
+	return transport.NewBatchedTransportSized(inner, BoardsBatchBytes, BoardsBatchCount)
+}
+
 func NewBoardsTransport(rawURL string, config transport.TransportConfig) *BoardsTransport {
 	return &BoardsTransport{
 		BaseTransport: transport.NewBaseTransport(config),
