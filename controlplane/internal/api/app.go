@@ -17,6 +17,9 @@ type App struct {
 	Cipher  auth.TokenCipher
 	Config  config.Config
 	limiter *ipRateLimiter
+
+	keyLimiter   *ipRateLimiter
+	floodLimiter *ipRateLimiter
 }
 
 func NewApp(st *store.Store, hasher auth.Hasher, cipher auth.TokenCipher, cfg config.Config) *App {
@@ -26,6 +29,9 @@ func NewApp(st *store.Store, hasher auth.Hasher, cipher auth.TokenCipher, cfg co
 		Cipher:  cipher,
 		Config:  cfg,
 		limiter: newIPRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst),
+
+		keyLimiter:   newIPRateLimiter(keyRequestsPerSecond, keyRequestBurst),
+		floodLimiter: newIPRateLimiter(floodRequestsPerSecond, floodRequestBurst),
 	}
 }
 

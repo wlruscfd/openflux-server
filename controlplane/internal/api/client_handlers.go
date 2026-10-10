@@ -18,7 +18,7 @@ type resolveResponse struct {
 	TrafficLimitBytes *int64   `json:"traffic_limit_bytes,omitempty"`
 }
 
-// handleResolve is rate-limited per IP since the key token is presented directly here.
+// handleResolve limits unknown tokens per IP (guessing) and known keys per key, so many users behind one NAT address do not share a budget.
 func (a *App) handleResolve(w http.ResponseWriter, r *http.Request) {
 	token, ok := auth.ExtractBearer(r)
 	if !ok {
@@ -28,11 +28,19 @@ func (a *App) handleResolve(w http.ResponseWriter, r *http.Request) {
 
 	k, err := a.Store.GetKeyByTokenHash(r.Context(), a.Hasher.Hash(token))
 	if err == store.ErrNotFound {
+		if !a.limiter.allow(clientIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
 		writeJSON(w, http.StatusOK, resolveResponse{Status: "not_found"})
 		return
 	}
 	if err != nil {
 		writeInternalError(w, r, "lookup failed", err)
+		return
+	}
+	if !a.keyLimiter.allow(k.ID) {
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
 

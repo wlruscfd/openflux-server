@@ -63,3 +63,18 @@ func TestIPRateLimiterTracksIndependently(t *testing.T) {
 		t.Fatalf("second immediate request from 1.1.1.1 should be limited")
 	}
 }
+
+func TestKeyLimiterDoesNotLetOneKeyUseAnothersBudget(t *testing.T) {
+	l := newIPRateLimiter(keyRequestsPerSecond, keyRequestBurst)
+	for i := 0; i < keyRequestBurst; i++ {
+		if !l.allow("key-a") {
+			t.Fatalf("request %d of key-a was refused inside its burst", i+1)
+		}
+	}
+	if l.allow("key-a") {
+		t.Fatal("key-a should be out of budget")
+	}
+	if !l.allow("key-b") {
+		t.Fatal("key-b must not share key-a's budget")
+	}
+}

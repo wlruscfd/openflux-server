@@ -30,11 +30,19 @@ func (a *App) handlePostKeyCookies(w http.ResponseWriter, r *http.Request) {
 	}
 	k, err := a.Store.GetKeyByTokenHash(r.Context(), a.Hasher.Hash(token))
 	if err == store.ErrNotFound {
+		if !a.limiter.allow(clientIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
 		writeError(w, http.StatusNotFound, "key not found")
 		return
 	}
 	if err != nil {
 		writeInternalError(w, r, "lookup failed", err)
+		return
+	}
+	if !a.keyLimiter.allow(k.ID) {
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
 

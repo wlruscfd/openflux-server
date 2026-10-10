@@ -93,10 +93,17 @@ func (a *App) withNodeToken(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+const (
+	keyRequestsPerSecond   = 2
+	keyRequestBurst        = 10
+	floodRequestsPerSecond = 100
+	floodRequestBurst      = 400
+)
+
 func (a *App) withRateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
-		if !a.limiter.allow(ip) {
+		if !a.floodLimiter.allow(ip) {
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
