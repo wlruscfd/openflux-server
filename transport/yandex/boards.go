@@ -39,6 +39,8 @@ const (
 	boardsCaptchaCooldown = 3 * time.Minute
 
 	boardsMaxAttempt = 10
+
+	boardsStableSession = 8 * time.Second
 )
 
 type boardsInfo struct {
@@ -543,11 +545,16 @@ func (t *BoardsTransport) connectLoop(hash, name string) {
 
 		t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
 
+		startedAt := time.Now()
 		info, err := t.authorize(hash, name)
 		if err == nil {
 			err = t.connectAndServe(attempt, info)
 		}
+		wasUp := t.IsConnected()
 		t.SetConnected(false)
+		if wasUp && time.Since(startedAt) > boardsStableSession {
+			attempt = 0
+		}
 
 		delay := reconnectBackoffBoards(attempt)
 		reason := "boards_error"
