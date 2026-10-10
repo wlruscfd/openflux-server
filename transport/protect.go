@@ -4,11 +4,24 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"syscall"
 	"time"
+
+	"github.com/p1neappleXpress/OpenFlux/netbind"
 )
 
 var protectFD func(fd int) bool
+
+func ProtectedHTTPTransport() *http.Transport {
+	dialer := netbind.Wrap(ProtectedDialer())
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		t := dt.Clone()
+		t.DialContext = dialer.DialContext
+		return t
+	}
+	return &http.Transport{DialContext: dialer.DialContext, ForceAttemptHTTP2: true}
+}
 
 func SetProtector(fn func(fd int) bool) {
 	protectFD = fn

@@ -20,7 +20,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/netbind"
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
@@ -173,8 +172,9 @@ func authorize(ctx context.Context, roomURL string, session *http.Client) (*cups
 	if client == nil {
 		jar, _ := cookiejar.New(nil)
 		client = &http.Client{
-			Jar:     jar,
-			Timeout: 30 * time.Second,
+			Jar:       jar,
+			Timeout:   30 * time.Second,
+			Transport: transport.ProtectedHTTPTransport(),
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 5 {
 					return fmt.Errorf("too many redirects")
@@ -732,7 +732,7 @@ func (w *cupsWS) connectAndServe() error {
 	}
 
 	dialer := websocket.Dialer{
-		NetDialContext:   netbind.DialContext,
+		NetDialContext:   transport.ProtectedHTTPTransport().DialContext,
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,

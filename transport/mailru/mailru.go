@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/netbind"
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
@@ -274,10 +272,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		dialer := websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
-			NetDialContext: netbind.Wrap(&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
+			NetDialContext:   transport.ProtectedHTTPTransport().DialContext,
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", mailruUserAgent)
@@ -287,10 +282,21 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		conn, resp, err := dialer.Dial(info.WsURL, headers)
 		if err != nil {
 			status := 0
+			body := ""
 			if resp != nil {
 				status = resp.StatusCode
+				if resp.Body != nil {
+					raw, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+					resp.Body.Close()
+					body = strings.TrimSpace(string(raw))
+				}
 			}
 			utils.Debugf("[M-DOCS] WebSocket dial failed (http %d): %v", status, err)
+			if body != "" {
+				err = fmt.Errorf("http %d, server said %q: %w", status, body, err)
+			} else if status != 0 {
+				err = fmt.Errorf("http %d: %w", status, err)
+			}
 			t.scheduleReconnect(attempt, "dial_failed", err)
 			return
 		}
@@ -629,7 +635,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 			return MailruDocsInfo{}, err
 		}
 	}
-	client := &http.Client{Jar: jar, Timeout: 15 * time.Second}
+	client := &http.Client{Jar: jar, Timeout: 15 * time.Second, Transport: transport.ProtectedHTTPTransport()}
 
 	reqBody := map[string]string{
 		"x-email":  "anonym",
