@@ -143,6 +143,9 @@ func StartTunnel(tunFd int, configJSON string, protector Protector, cb Callback)
 	}
 
 	tun := nodetunnel.NewTCPTunnel(trans, false)
+	if cfg.Transport == "mts" {
+		tun.LimitWindow(nodetunnel.MTSWindowBytes)
+	}
 	if cfg.MTU > 0 {
 		tun.SetMTU(uint32(cfg.MTU))
 	}
@@ -286,6 +289,9 @@ func StartSocks5Proxy(configJSON string, listenAddr string, cb Callback) error {
 	}
 
 	tun := nodetunnel.NewTCPTunnel(trans, false)
+	if cfg.Transport == "mts" {
+		tun.LimitWindow(nodetunnel.MTSWindowBytes)
+	}
 	if cfg.MTU > 0 {
 		tun.SetMTU(uint32(cfg.MTU))
 	}

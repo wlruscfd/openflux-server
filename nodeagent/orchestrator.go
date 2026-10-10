@@ -571,7 +571,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	}
 	tun := nodetunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
 	if k.Transport == "mts" {
-		tun.SetPacketTrace(true)
+		tun.LimitWindow(nodetunnel.MTSWindowBytes)
 	}
 	if portIdx >= 0 {
 		tun.SetPortRange(portStart, portEnd)

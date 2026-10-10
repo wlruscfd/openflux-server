@@ -66,6 +66,22 @@ type TCPTunnel struct {
 	tracePackets atomic.Bool
 }
 
+const MTSWindowBytes = 512 * 1024
+
+func (t *TCPTunnel) LimitWindow(bytes int) {
+	if bytes < 32768 {
+		bytes = 32768
+	}
+	rcv := tcpip.TCPReceiveBufferSizeRangeOption{Min: 32768, Default: bytes, Max: bytes}
+	snd := tcpip.TCPSendBufferSizeRangeOption{Min: 32768, Default: bytes, Max: bytes}
+	if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &rcv); err != nil {
+		utils.Debugf("[TUNNEL] Failed to cap recv buffer: %v", err)
+	}
+	if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &snd); err != nil {
+		utils.Debugf("[TUNNEL] Failed to cap send buffer: %v", err)
+	}
+}
+
 func (t *TCPTunnel) SetPacketTrace(on bool) {
 	t.tracePackets.Store(on)
 }
