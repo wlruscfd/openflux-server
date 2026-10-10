@@ -206,6 +206,8 @@ func (o *Orchestrator) pollLoop(ctx context.Context) {
 
 const workerStartStagger = 150 * time.Millisecond
 
+const maxWorkerStartsPerReconcile = 100
+
 type cookieProvider interface {
 	ProvideCookies(cookieStr string)
 }
@@ -299,18 +301,19 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 	}
 
 	var toStart []RemoteKey
+	var toStop []*worker
 	o.mu.Lock()
 	for id, w := range o.workers {
 		k, stillActive := active[id]
 		if !stillActive {
 			utils.Debugf("[NODEAGENT] stopping worker for key %s (no longer active)", id)
-			o.stopWorker(w)
+			toStop = append(toStop, w)
 			delete(o.workers, id)
 			continue
 		}
 		if w.driftedFrom(k) {
 			utils.Debugf("[NODEAGENT] restarting worker for key %s (doc/transport/e2e changed in the panel)", id)
-			o.stopWorker(w)
+			toStop = append(toStop, w)
 			delete(o.workers, id)
 			toStart = append(toStart, k)
 		}
@@ -331,6 +334,13 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		toStart = append(toStart, k)
 	}
 	o.mu.Unlock()
+
+	for _, w := range toStop {
+		o.stopWorker(w)
+	}
+	if len(toStart) > maxWorkerStartsPerReconcile {
+		toStart = toStart[:maxWorkerStartsPerReconcile]
+	}
 
 	// Worker starts are staggered outside o.mu so a cold start doesn't burst dozens of near-simultaneous connections from one exit-node IP, which looks like bot traffic to the doc providers.
 	for i, k := range toStart {
@@ -668,14 +678,18 @@ func (o *Orchestrator) reportUsage(ctx context.Context) {
 		return
 	}
 
+	var toStop []*worker
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	for _, id := range disabledNow {
 		if w, ok := o.workers[id]; ok {
 			utils.Debugf("[NODEAGENT] key %s went over quota, stopping worker", id)
-			o.stopWorker(w)
+			toStop = append(toStop, w)
 			delete(o.workers, id)
 		}
+	}
+	o.mu.Unlock()
+	for _, w := range toStop {
+		o.stopWorker(w)
 	}
 }
 

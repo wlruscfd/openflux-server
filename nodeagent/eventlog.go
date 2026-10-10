@@ -13,6 +13,7 @@ import (
 const (
 	eventLogInterval   = time.Minute
 	summaryLogInterval = time.Minute
+	maxWaitingListed   = 10
 )
 
 func keyEventLogger(keyID, transportName string) func(code, detail string) {
@@ -73,7 +74,13 @@ func (o *Orchestrator) logSummary() {
 		log.Printf("[NODEAGENT] %d key(s) running, all connected to their provider", total)
 		return
 	}
-	log.Printf("[NODEAGENT] %d key(s) running, %d not connected to their provider yet: %s", total, len(waiting), strings.Join(waiting, ", "))
+	shown := waiting
+	more := ""
+	if len(shown) > maxWaitingListed {
+		shown = shown[:maxWaitingListed]
+		more = fmt.Sprintf(" and %d more", len(waiting)-maxWaitingListed)
+	}
+	log.Printf("[NODEAGENT] %d key(s) running, %d not connected to their provider yet: %s%s", total, len(waiting), strings.Join(shown, ", "), more)
 }
 
 func (o *Orchestrator) warnThrottled(key, format string, args ...interface{}) {
