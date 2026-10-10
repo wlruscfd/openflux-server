@@ -738,8 +738,7 @@ func (t *BoardsTransport) handshake(sess *boardsSession) error {
 		if bytes.HasPrefix(m, []byte("431[")) {
 			break
 		}
-		if bytes.Contains(m, []byte(`"subscribed":true`)) &&
-			bytes.Contains(m, []byte(`"dashboard_link"`)) {
+		if bytes.Contains(m, []byte(`"subscribed":true`)) {
 			break
 		}
 	}
