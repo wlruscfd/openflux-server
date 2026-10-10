@@ -674,7 +674,6 @@ func (t *BoardsTransport) connectAndServe(attempt int, info boardsInfo) error {
 
 	kaStop := make(chan struct{})
 	utils.SafeGo("boards.keepalive", func() { t.keepAliveLoop(sess, kaStop) })
-	utils.SafeGo("boards.ping", func() { t.pingLoop(sess, kaStop) })
 	defer close(kaStop)
 
 	for {
@@ -936,24 +935,6 @@ func (t *BoardsTransport) keepAliveLoop(sess *boardsSession, stop chan struct{})
 			}
 			if err := sess.writeEventObj("dashboard", obj); err != nil {
 				utils.Debugf("[BOARDS] heartbeat: %v", err)
-				return
-			}
-		}
-	}
-}
-
-func (t *BoardsTransport) pingLoop(sess *boardsSession, stop chan struct{}) {
-	tick := time.NewTicker(boardsPingInterval)
-	defer tick.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-t.done:
-			return
-		case <-tick.C:
-			if err := sess.writeRaw("2"); err != nil {
-				utils.Debugf("[BOARDS] engine.io ping: %v", err)
 				return
 			}
 		}
