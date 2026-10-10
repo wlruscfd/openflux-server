@@ -583,6 +583,9 @@ func (t *Transport) connectLoop(boardUID string) {
 
 		t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
 
+		if !transport.WaitConnectSlot(t.done) {
+			return
+		}
 		info, err := t.fetchGuestSession(boardUID)
 		established := false
 		if err != nil {

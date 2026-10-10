@@ -517,6 +517,9 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 	t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
 
 	go func() {
+		if !transport.WaitConnectSlot(t.Done()) {
+			return
+		}
 		t.Mu.Lock()
 		existingSession := t.session
 		t.Mu.Unlock()

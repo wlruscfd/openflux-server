@@ -545,6 +545,9 @@ func (t *BoardsTransport) connectLoop(hash, name string) {
 
 		t.EmitEvent(transport.EventConnecting, strconv.Itoa(attempt+1))
 
+		if !transport.WaitConnectSlot(t.done) {
+			return
+		}
 		startedAt := time.Now()
 		info, err := t.authorize(hash, name)
 		if err == nil {

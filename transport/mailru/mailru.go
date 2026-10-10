@@ -248,6 +248,9 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				utils.Debugf("[PANIC] recovered in mailru.connect: %v", r)
 			}
 		}()
+		if !transport.WaitConnectSlot(t.Done()) {
+			return
+		}
 		t.Mu.Lock()
 		existingSession := t.session
 		t.Mu.Unlock()
