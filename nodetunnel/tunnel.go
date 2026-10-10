@@ -66,7 +66,15 @@ type TCPTunnel struct {
 	tracePackets atomic.Bool
 }
 
-const MTSWindowBytes = 512 * 1024
+func WindowBytesFor(transportName string) int {
+	switch transportName {
+	case "mts":
+		return 512 * 1024
+	case "boards":
+		return 1024 * 1024
+	}
+	return 0
+}
 
 func (t *TCPTunnel) LimitWindow(bytes int) {
 	if bytes < 32768 {

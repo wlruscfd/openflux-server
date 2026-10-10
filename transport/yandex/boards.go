@@ -117,7 +117,7 @@ type BoardsTransport struct {
 }
 
 const (
-	BoardsBatchBytes = 128 * 1024
+	BoardsBatchBytes = 40000
 	BoardsBatchCount = 1000
 )
 
