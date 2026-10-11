@@ -62,6 +62,8 @@ export const ru = {
 	'keys.docUrlPhMts': 'https://my.mts-link.ru/boards/board/…',
 	'keys.docUrlTelemost': 'Ссылка на конференцию Яндекс Телемост',
 	'keys.docUrlPhTelemost': 'https://telemost.yandex.ru/j/…',
+	'keys.docUrlCups': 'Список комнат cups.online (base64)',
+	'keys.docUrlPhCups': 'WyI0OTdkZDBmZC01MGMy…',
 	'keys.docUrlDirect': 'Ссылка (для direct не нужна)',
 	'keys.docUrlPhDirect': '(не используется для direct)',
 

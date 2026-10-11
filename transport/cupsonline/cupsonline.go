@@ -9,10 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,6 +82,11 @@ type CupsonlineConfig struct {
 	SendInterval time.Duration
 
 	SendQueueSize int
+	// SendQueueBytes bounds what one channel may hold unsent. Past it Send
+	// refuses the packet like a full router queue would, so the tunnel's
+	// congestion control backs off instead of the backlog growing into
+	// seconds of delay for every user of the key.
+	SendQueueBytes int
 
 	// Буферы сокета, а не лимит на сообщение: gorilla выделяет их целиком на
 	// каждое соединение. MaxMessageBytes — сколько может прийти одним фреймом.
@@ -126,10 +134,11 @@ func DefaultCupsonlineConfig() CupsonlineConfig {
 
 		// В очереди кадры кодека (до ~8 KB), а не IP-пакеты: очередь длиннее
 		// — это уже не буфер, а секунды задержки.
-		SendQueueSize: 1024,
+		SendQueueSize:  1024,
+		SendQueueBytes: 128 << 10,
 
-		ReadBufferSize:  64 << 10,
-		WriteBufferSize: 64 << 10,
+		ReadBufferSize:  32 << 10,
+		WriteBufferSize: 32 << 10,
 		MaxMessageBytes: 8 << 20,
 
 		// Длина пакета во внутреннем кадре — uint16, так что один пакет не
@@ -137,11 +146,25 @@ func DefaultCupsonlineConfig() CupsonlineConfig {
 		// помещается и режется на сообщения при отправке.
 		MaxPayloadBytes: 65535,
 
-		NumRooms:        4,
+		NumRooms:        roomsFromEnv(4),
 		RoomCreatePause: 500 * time.Millisecond,
 
 		StatsInterval: 5 * time.Second,
 	}
+}
+
+func roomsFromEnv(def int) int {
+	if n, err := strconv.Atoi(os.Getenv("OPENFLUX_CUPS_ROOMS")); err == nil && n >= 1 && n <= 32 {
+		return n
+	}
+	return def
+}
+
+func jittered(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d*3/4 + time.Duration(rand.Int63n(int64(d)/2+1))
 }
 
 var (
@@ -168,6 +191,9 @@ type cupsAuth struct {
 // channel. session carries the cookies of an earlier join over (nil starts a
 // fresh one), so re-joining doesn't add a new participant every time.
 func authorize(ctx context.Context, roomURL string, session *http.Client) (*cupsAuth, error) {
+	if !transport.WaitConnectSlot(ctx.Done()) {
+		return nil, errStopped
+	}
 	client := session
 	if client == nil {
 		jar, _ := cookiejar.New(nil)
@@ -266,9 +292,10 @@ var (
 	errRoomGone = errors.New("комната не существует")
 	// errRefused marks Centrifugo turning our tokens down, with an error
 	// reply or by hanging up mid-handshake. Only a fresh join fixes that.
-	errRefused = errors.New("refused")
-	errNoRoom  = errors.New("cups: нет подключённой комнаты")
-	errStopped = errors.New("cups: транспорт остановлен")
+	errRefused   = errors.New("refused")
+	errNoRoom    = errors.New("cups: нет подключённой комнаты")
+	errStopped   = errors.New("cups: транспорт остановлен")
+	errQueueFull = errors.New("cups: очередь канала переполнена")
 )
 
 func joinURL(roomUUID string) string { return baseRoomURL + "?room=" + roomUUID }
@@ -571,7 +598,8 @@ type cupsWS struct {
 	// packet split across a drop is lost, like on any link.
 	recvBufs map[string][]byte
 
-	sendQueue chan []byte
+	sendQueue   chan []byte
+	queuedBytes atomic.Int64
 
 	stats *channelStats
 }
@@ -626,7 +654,7 @@ func (w *cupsWS) run() {
 	for w.ctx.Err() == nil {
 		if needJoin || w.dead.Load() {
 			if err := w.join(); err != nil {
-				if !sleepCtx(w.ctx, w.retryDelay(delay)) {
+				if !sleepCtx(w.ctx, jittered(w.retryDelay(delay))) {
 					return
 				}
 				delay = w.backoff(delay)
@@ -655,7 +683,7 @@ func (w *cupsWS) run() {
 		// dropped just reconnects: a join is two page loads, and a reconnect
 		// storm of those is how an IP gets rate-limited.
 		needJoin = errors.Is(err, errRefused) || (!wasReady && fails%2 == 0)
-		if !sleepCtx(w.ctx, w.retryDelay(delay)) {
+		if !sleepCtx(w.ctx, jittered(w.retryDelay(delay))) {
 			return
 		}
 		delay = w.backoff(delay)
@@ -731,6 +759,9 @@ func (w *cupsWS) connectAndServe() error {
 		header.Add("Cookie", c.Name+"="+c.Value)
 	}
 
+	if !transport.WaitConnectSlot(w.ctx.Done()) {
+		return errStopped
+	}
 	dialer := websocket.Dialer{
 		NetDialContext:   transport.ProtectedHTTPTransport().DialContext,
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
@@ -846,6 +877,7 @@ func (w *cupsWS) sendLoop() {
 		case <-w.ctx.Done():
 			return
 		case pkt := <-w.sendQueue:
+			w.queuedBytes.Add(-int64(len(pkt) + 2))
 			// Flush before a packet that would overflow the batch, not after
 			// it: otherwise a batch ends up a whole packet over the limit.
 			if len(batch) > 0 && totalBytes+2+len(pkt) > w.config.BatchMaxBytes {
@@ -918,19 +950,10 @@ func (w *cupsWS) sendChunk(chunk []byte) error {
 	binary.BigEndian.PutUint16(payload[:2], uint16(len(chunk)))
 	copy(payload[2:], chunk)
 
-	msg := map[string]interface{}{
-		"rpc": map[string]interface{}{
-			"method": "shared_editor_change_cursors",
-			"data": map[string]interface{}{
-				"cursors": cursorsFromBytes(payload),
-				"ranges":  []interface{}{},
-				"room":    w.auth().roomUUID,
-				"user":    w.auth().userUUID,
-			},
-		},
-		"id": w.nextID(),
-	}
-	return w.writeJSON(msg)
+	nums := packNumbers(payload)
+	a := w.auth()
+	buf := make([]byte, 0, 160+len(nums)*17)
+	return w.writeRaw(appendChunkMessage(buf, nums, a.roomUUID, a.userUUID, w.nextID()))
 }
 
 // bytesPerNumber is how many bytes ride in one row/column integer. cups.online
@@ -1011,6 +1034,12 @@ func (w *cupsWS) handleReply(raw []byte) {
 		_ = w.writeRaw([]byte("{}"))
 		return
 	}
+	if sender, nums, st := parseCursorPush(raw); st != pushFallback {
+		if st == pushParsed && sender != w.auth().userUUID {
+			w.deliverNums(sender, nums)
+		}
+		return
+	}
 	var obj map[string]interface{}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return
@@ -1054,6 +1083,12 @@ func (w *cupsWS) handleReply(raw []byte) {
 		col, _ := asCursorInt(m["column"])
 		nums = append(nums, row, col)
 	}
+	w.deliverNums(sender, nums)
+}
+
+// deliverNums turns a message's cursor integers back into the byte stream
+// and hands every whole packet to onData.
+func (w *cupsWS) deliverNums(sender string, nums []uint64) {
 	decoded := bytesFromNumbers(nums)
 	// Strip the padding: the first two bytes are how many real bytes follow.
 	if len(decoded) < 2 {
@@ -1112,11 +1147,22 @@ func (w *cupsWS) handleReply(raw []byte) {
 }
 
 func (w *cupsWS) Send(data []byte) error {
+	n := int64(len(data) + 2)
+	if w.queuedBytes.Add(n) > int64(w.config.SendQueueBytes) {
+		w.queuedBytes.Add(-n)
+		w.stats.dropped.Add(1)
+		return errQueueFull
+	}
 	select {
 	case w.sendQueue <- data:
 		return nil
 	case <-w.ctx.Done():
+		w.queuedBytes.Add(-n)
 		return errStopped
+	default:
+		w.queuedBytes.Add(-n)
+		w.stats.dropped.Add(1)
+		return errQueueFull
 	}
 }
 

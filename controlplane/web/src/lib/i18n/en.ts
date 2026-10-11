@@ -64,6 +64,8 @@ export const en: Dict = {
 	'keys.docUrlPhMts': 'https://my.mts-link.ru/boards/board/…',
 	'keys.docUrlTelemost': 'Yandex Telemost conference link',
 	'keys.docUrlPhTelemost': 'https://telemost.yandex.ru/j/…',
+	'keys.docUrlCups': 'cups.online room list (base64)',
+	'keys.docUrlPhCups': 'WyI0OTdkZDBmZC01MGMy…',
 	'keys.docUrlDirect': 'Link (direct transport needs none)',
 	'keys.docUrlPhDirect': '(not used by direct)',
 

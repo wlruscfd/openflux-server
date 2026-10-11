@@ -12,6 +12,7 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/gateway"
 	"github.com/p1neappleXpress/OpenFlux/socks5"
 	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
 	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
 	"github.com/p1neappleXpress/OpenFlux/transport/mts"
 	"github.com/p1neappleXpress/OpenFlux/transport/oneme"
@@ -41,7 +42,7 @@ type Protector interface {
 type Config struct {
 	Mode string `json:"mode"` // must be "manual" - see buildTransport
 
-	Transport string `json:"transport"` // "yandex" (default), "volga", "max", "boards", "mailru", "mts", "telemost", or "yandex_multistream"
+	Transport string `json:"transport"` // "yandex" (default), "volga", "max", "boards", "mailru", "mts", "telemost", "cupsonline", or "yandex_multistream"
 	DocURL    string `json:"doc_url"`   // yandex, volga
 	MaxToken  string `json:"max_token"` // max: your MAX account's own auth token
 	MaxUID    int64  `json:"max_uid"`   // max: the contact's user ID to place the call to
@@ -372,6 +373,11 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 			return nil, fmt.Errorf("doc_url is required")
 		}
 		return wrapGeneric(mts.NewTransport(cfg.DocURL, transportConfig), cfg), nil
+	case "cupsonline":
+		if cfg.DocURL == "" {
+			return nil, fmt.Errorf("doc_url is required")
+		}
+		return wrapBatched(cupsonline.NewCupsonlineTransport(cfg.DocURL, transportConfig, true), cfg), nil
 	case "telemost":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")

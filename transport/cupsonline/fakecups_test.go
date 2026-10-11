@@ -331,6 +331,7 @@ func fastConfig() CupsonlineConfig {
 	c.WSHandshakeTimeout = 2 * time.Second
 	c.StatsInterval = time.Hour
 	c.SendInterval = 0 // no throttling against the in-process fake
+	c.SendQueueBytes = 64 << 20
 	return c
 }
 

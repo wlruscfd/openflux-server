@@ -72,6 +72,8 @@ func WindowBytesFor(transportName string) int {
 		return 512 * 1024
 	case "boards", "telemost":
 		return 1024 * 1024
+	case "cupsonline":
+		return 256 * 1024
 	}
 	return 0
 }
