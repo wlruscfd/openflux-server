@@ -101,12 +101,16 @@ func New(typ, url string, params map[string]interface{}, o Options) (transport.T
 // so the carrier always runs as a striped group of lanes (participants of the
 // same conference). params:
 //
-//	"stripes"     a fixed lane count, or "auto" (the default): start at one
-//	              lane and add lanes while they stay saturated
+//	"stripes"     a fixed lane count (default telemostLanes), or "auto": start
+//	              at one lane and add lanes while they stay saturated
 //	"stripes_max" upper bound for auto (default 11)
 //	"cookies"     Yandex cookie header, only needed to create a conference
 //
 // Both ends of a tunnel stripe, so the two must be this build or later.
+// telemostLanes is the lane count of a Telemost carrier unless its profile
+// says otherwise: one lane carries at most ~16 Mbit/s, so five reach ~80.
+const telemostLanes = 5
+
 func newTelemost(url string, params map[string]interface{}, o Options) transport.Transport {
 	str := func(key string) string {
 		switch v := params[key].(type) {
@@ -119,15 +123,17 @@ func newTelemost(url string, params map[string]interface{}, o Options) transport
 		}
 		return ""
 	}
-	n, auto := 1, true
+	n, auto := telemostLanes, false
 	st := str("stripes")
 	if e := os.Getenv("TELEMOST_STRIPES"); e != "" { // debugging override
 		st = e
 	}
 	switch {
-	case st != "" && st != "auto":
+	case st == "auto":
+		n, auto = 1, true
+	case st != "":
 		if v, err := strconv.Atoi(st); err == nil && v >= 1 {
-			n, auto = v, false
+			n = v
 		}
 	}
 	maxLanes, _ := strconv.Atoi(str("stripes_max"))

@@ -16,7 +16,7 @@ func telemostLaneSettings() (lanes, maxLanes int, auto bool) {
 	lanes, maxLanes = TelemostLanes, TelemostMaxLanes
 	v := os.Getenv("OPENFLUX_TELEMOST_LANES")
 	switch {
-	case v == "" || v == "auto":
+	case v == "auto":
 		lanes, auto = 1, true
 	case v != "":
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
