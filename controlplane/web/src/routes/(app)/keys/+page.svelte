@@ -193,7 +193,7 @@
 				createError = t('keys.invalidDocUrls');
 				return;
 			}
-		} else if (!docUrl.trim()) {
+		} else if (transportNeedsDocUrl && !docUrl.trim()) {
 			createError = t('keys.invalidDoc');
 			return;
 		}
