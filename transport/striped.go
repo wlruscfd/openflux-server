@@ -60,6 +60,9 @@ type StripedTransport struct {
 	cbMu sync.RWMutex
 	cb   func([]byte)
 
+	evMu sync.RWMutex
+	evCb func(code, detail string)
+
 	ro *reorderBuffer
 
 	laneSent, laneRecv [maxStripeLanes]atomic.Uint64
@@ -310,6 +313,7 @@ func (s *StripedTransport) Start() error {
 	if started == 0 {
 		return fmt.Errorf("striped: no lane started: %w", firstErr)
 	}
+	go s.eventLoop()
 	go s.ro.run(s.done)
 	go s.ackLoop()
 	go s.lossLoop()
@@ -1502,4 +1506,51 @@ func (r *reorderBuffer) snapshot() (delivered, skipped, late uint64, buffered in
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.delivered, r.skipped, r.late, r.count, r.gaps
+}
+
+func (s *StripedTransport) SetEventCallback(fn func(code, detail string)) {
+	s.evMu.Lock()
+	s.evCb = fn
+	s.evMu.Unlock()
+}
+
+func (s *StripedTransport) emit(code, detail string) {
+	s.evMu.RLock()
+	fn := s.evCb
+	s.evMu.RUnlock()
+	if fn != nil {
+		fn(code, detail)
+	}
+}
+
+func (s *StripedTransport) eventLoop() {
+	s.emit(EventConnecting, "1")
+	t := time.NewTicker(250 * time.Millisecond)
+	defer t.Stop()
+	ready, attempt := false, 1
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+		}
+		now := time.Now()
+		lanes, _ := s.snapshotLanes()
+		up := false
+		for i := range lanes {
+			if s.eligible(i, now) {
+				up = true
+				break
+			}
+		}
+		switch {
+		case up && !ready:
+			ready = true
+			s.emit(EventConnected, strconv.Itoa(attempt))
+		case !up && ready:
+			ready = false
+			attempt++
+			s.emit(EventRetrying, fmt.Sprintf("%d|0|stripe_lanes|no lane is carrying traffic", attempt))
+		}
+	}
 }

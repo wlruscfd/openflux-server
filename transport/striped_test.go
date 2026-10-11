@@ -238,3 +238,36 @@ func TestReorderBufferStartsAtSenderLow(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestStripedReportsConnectingThenConnected(t *testing.T) {
+	a := &lossyLane{rnd: rand.New(rand.NewSource(1))}
+	b := &lossyLane{rnd: rand.New(rand.NewSource(2))}
+	a.peer, b.peer = b, a
+	s := NewStripedTransport([]Transport{a})
+	var mu sync.Mutex
+	var got []string
+	s.SetEventCallback(func(code, detail string) {
+		mu.Lock()
+		got = append(got, code)
+		mu.Unlock()
+	})
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) < 2 || got[0] != EventConnecting || got[1] != EventConnected {
+		t.Fatalf("events = %v, want connecting then connected", got)
+	}
+}
