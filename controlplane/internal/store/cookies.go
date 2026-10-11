@@ -17,12 +17,15 @@ type KeyCookie struct {
 }
 
 // SetKeyCookies stores the jar for one key, encrypted at rest by the caller.
-func (s *Store) SetKeyCookies(ctx context.Context, keyID string, enc []byte) error {
+func (s *Store) SetKeyCookies(ctx context.Context, keyID string, enc []byte, resolvedURL string) error {
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO key_cookies (key_id, cookies_enc, updated_at)
-		VALUES ($1, $2, now())
-		ON CONFLICT (key_id) DO UPDATE SET cookies_enc = EXCLUDED.cookies_enc, updated_at = now()
-	`, keyID, enc)
+		INSERT INTO key_cookies (key_id, cookies_enc, resolved_url, updated_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (key_id) DO UPDATE SET
+			cookies_enc = EXCLUDED.cookies_enc,
+			resolved_url = EXCLUDED.resolved_url,
+			updated_at = now()
+	`, keyID, enc, resolvedURL)
 	if err != nil {
 		return fmt.Errorf("set key cookies: %w", err)
 	}
@@ -65,7 +68,7 @@ func (s *Store) KeyCookieStatus(ctx context.Context, keyID string) (bool, *time.
 // Only the node's own keys, and only over the node-token channel.
 func (s *Store) ListNodeKeyCookies(ctx context.Context, nodeID string) ([]model.NodeKeyCookie, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT k.id, k.transport, c.cookies_enc
+		SELECT k.id, k.transport, c.cookies_enc, c.resolved_url
 		FROM key_cookies c
 		JOIN keys k ON k.id = c.key_id
 		WHERE k.assigned_node_id = $1
@@ -81,7 +84,7 @@ func (s *Store) ListNodeKeyCookies(ctx context.Context, nodeID string) ([]model.
 	var out []model.NodeKeyCookie
 	for rows.Next() {
 		var c model.NodeKeyCookie
-		if err := rows.Scan(&c.KeyID, &c.Transport, &c.CookiesEnc); err != nil {
+		if err := rows.Scan(&c.KeyID, &c.Transport, &c.CookiesEnc, &c.ResolvedURL); err != nil {
 			return nil, fmt.Errorf("scan node key cookie: %w", err)
 		}
 		out = append(out, c)

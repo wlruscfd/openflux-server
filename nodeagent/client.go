@@ -46,9 +46,10 @@ func (k RemoteKey) IsRelayed() bool {
 }
 
 type RemoteKeyCookie struct {
-	KeyID     string `json:"key_id"`
-	Transport string `json:"transport"`
-	Cookies   string `json:"cookies"`
+	KeyID       string `json:"key_id"`
+	Transport   string `json:"transport"`
+	Cookies     string `json:"cookies"`
+	ResolvedURL string `json:"resolved_url,omitempty"`
 }
 
 func (c *ControlClient) ListKeys(ctx context.Context) ([]RemoteKey, error) {

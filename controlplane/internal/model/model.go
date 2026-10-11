@@ -76,7 +76,8 @@ type UsageDay struct {
 
 // NodeKeyCookie is one key's cookie jar as handed to the node that runs it.
 type NodeKeyCookie struct {
-	KeyID      string
-	Transport  string
-	CookiesEnc []byte
+	KeyID        string
+	Transport    string
+	CookiesEnc   []byte
+	ResolvedURL  string
 }

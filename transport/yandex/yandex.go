@@ -313,6 +313,27 @@ func (t *YandexDocsTransport) ProvideCookies(cookieStr string) {
 	t.ForceReconnect()
 }
 
+// ProvideDocURL points the transport at the editor address a browser resolved for a share link.
+// A /i/<key> share is turned into /edit/<type>/<id> by script in the browser; a plain HTTP client
+// only ever sees the landing page, which carries no editor config.
+func (t *YandexDocsTransport) ProvideDocURL(raw string) {
+	normalized := normalizeDocURL(strings.TrimSpace(raw))
+	if normalized == "" {
+		return
+	}
+
+	t.Mu.Lock()
+	if normalized == t.url {
+		t.Mu.Unlock()
+		return
+	}
+	t.url = normalized
+	t.Mu.Unlock()
+
+	t.debugf("document url switched to %s, forcing a reconnect", normalized)
+	t.ForceReconnect()
+}
+
 // cookieNames lists only the names of the cookies a jar would send for a URL: enough to tell
 // "the jar arrived" from "the jar arrived but is missing the session cookie" without logging
 // secret values.
@@ -533,7 +554,10 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		}
 
 		cookieGeneration := t.captchaCookieGeneration.Load()
-		info, err := t.fetchDocInfo(t.url, userID)
+		t.Mu.RLock()
+		docURL := t.url
+		t.Mu.RUnlock()
+		info, err := t.fetchDocInfo(docURL, userID)
 		if err != nil {
 			t.debugf("fetchDocInfo failed: %v", err)
 			if errors.Is(err, errCaptchaBlocked) {
@@ -993,13 +1017,21 @@ func (t *YandexDocsTransport) handleMessage(session *DocSession, data []byte) {
 	if strings.Contains(text, "saveChanges") || strings.Contains(text, "cursor") {
 		base64Str := t.extractBase64String(text)
 		if base64Str == "" {
+			t.debugf("base64 extract empty, frame len=%d: %.200s", len(text), text)
 			return
 		}
 
 		decoded, err := base64.StdEncoding.DecodeString(base64Str)
 		if err != nil {
-			t.debugf("Base64 decode error: %v", err)
-			return
+			t.debugf("Base64 decode error: %v payload=%.80s", err, base64Str)
+			decoded, err = base64.RawStdEncoding.DecodeString(strings.TrimRight(base64Str, "="))
+			if err != nil {
+				decoded, err = base64.RawURLEncoding.DecodeString(strings.TrimRight(base64Str, "="))
+			}
+			if err != nil {
+				t.debugf("Base64 decode failed on all encodings: %v", err)
+				return
+			}
 		}
 
 		if t.wasRecentlySent(decoded) {
@@ -1373,8 +1405,8 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			t.EmitEvent(transport.EventCaptchaRequired, url)
 		}
 		preview := html
-		if len(preview) > 2000 {
-			preview = preview[:2000]
+		if len(preview) > 600 {
+			preview = preview[:600]
 		}
 		t.debugf("HTML preview: %s", preview)
 		if isCaptcha {

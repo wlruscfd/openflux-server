@@ -213,6 +213,10 @@ type cookieProvider interface {
 	ProvideCookies(cookieStr string)
 }
 
+type docURLProvider interface {
+	ProvideDocURL(raw string)
+}
+
 // applyCookies pushes freshly uploaded jars into the transports already running here and drops
 // the session so the next attempt presents them. A key the client can pass a provider check on
 // but this node cannot is the whole point: the jar arrives from outside, not from a solver.
@@ -242,6 +246,7 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 		w    *worker
 		hash string
 		jar  string
+		url  string
 	}, 0, len(byKey))
 	for id, j := range byKey {
 		w, ok := o.workers[id]
@@ -249,6 +254,9 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 			continue
 		}
 		hash := cookieFingerprint(j.Cookies)
+		if j.ResolvedURL != "" {
+			hash = cookieFingerprint(j.Cookies + "|" + j.ResolvedURL)
+		}
 		if hash == "" || hash == w.cookieHash {
 			continue
 		}
@@ -258,7 +266,8 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 			w    *worker
 			hash string
 			jar  string
-		}{id: id, w: w, hash: hash, jar: j.Cookies})
+			url  string
+		}{id: id, w: w, hash: hash, jar: j.Cookies, url: j.ResolvedURL})
 	}
 	o.mu.Unlock()
 
@@ -277,6 +286,13 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 		}
 		log.Printf("[NODEAGENT] key %s (%s): applying the uploaded cookie jar (%d bytes) and reconnecting", t.id, t.w.transportName, len(t.jar))
 		provider.ProvideCookies(t.jar)
+		if t.url != "" {
+			if dprov, ok := t.w.trans.(docURLProvider); ok {
+				dprov.ProvideDocURL(t.url)
+			} else {
+				log.Printf("[NODEAGENT] key %s (%s): resolved document url ignored, this transport does not take one", t.id, t.w.transportName)
+			}
+		}
 		transport.ForceReconnect(t.w.trans)
 	}
 }

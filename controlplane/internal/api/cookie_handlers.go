@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"openflux-control/internal/auth"
@@ -10,7 +11,8 @@ import (
 )
 
 type postCookiesRequest struct {
-	Cookies string `json:"cookies"`
+	Cookies     string `json:"cookies"`
+	ResolvedURL string `json:"resolved_url"`
 }
 
 type postCookiesResponse struct {
@@ -18,6 +20,7 @@ type postCookiesResponse struct {
 }
 
 const maxCookieBytes = 32 * 1024
+const maxResolvedURLBytes = 2 * 1024
 
 // handlePostKeyCookies lets the client that owns a key push a cookie jar the controlplane then
 // hands to the node running that key. This is the direct path for a provider check the client
@@ -65,12 +68,25 @@ func (a *App) handlePostKeyCookies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolvedURL := strings.TrimSpace(req.ResolvedURL)
+	if len(resolvedURL) > maxResolvedURLBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "resolved url too long")
+		return
+	}
+	if resolvedURL != "" {
+		u, err := url.Parse(resolvedURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			writeError(w, http.StatusBadRequest, "resolved url is not http(s)")
+			return
+		}
+	}
+
 	enc, err := a.Cipher.Encrypt(jar)
 	if err != nil {
 		writeInternalError(w, r, "cookie encryption failed", err)
 		return
 	}
-	if err := a.Store.SetKeyCookies(r.Context(), k.ID, enc); err != nil {
+	if err := a.Store.SetKeyCookies(r.Context(), k.ID, enc, resolvedURL); err != nil {
 		writeInternalError(w, r, "store cookies failed", err)
 		return
 	}
@@ -78,9 +94,10 @@ func (a *App) handlePostKeyCookies(w http.ResponseWriter, r *http.Request) {
 }
 
 type nodeKeyCookieResponse struct {
-	KeyID     string `json:"key_id"`
-	Transport string `json:"transport"`
-	Cookies   string `json:"cookies"`
+	KeyID       string `json:"key_id"`
+	Transport   string `json:"transport"`
+	Cookies     string `json:"cookies"`
+	ResolvedURL string `json:"resolved_url,omitempty"`
 }
 
 // handleNodeListCookies serves the jars for the keys this node actually runs, decrypted here
@@ -101,7 +118,7 @@ func (a *App) handleNodeListCookies(w http.ResponseWriter, r *http.Request) {
 		if err != nil || len(jar) == 0 {
 			continue
 		}
-		out = append(out, nodeKeyCookieResponse{KeyID: c.KeyID, Transport: c.Transport, Cookies: string(jar)})
+		out = append(out, nodeKeyCookieResponse{KeyID: c.KeyID, Transport: c.Transport, Cookies: string(jar), ResolvedURL: c.ResolvedURL})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
