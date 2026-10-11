@@ -309,7 +309,7 @@ func (t *TelemostTransport) Stop() error {
 }
 
 func (t *TelemostTransport) getConnectionInfo() error {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := telemostHTTPClient()
 	var apiURL, method string
 	if t.conferenceURL != "" {
 		encodedURL := url.QueryEscape(t.conferenceURL)
@@ -392,7 +392,7 @@ func (t *TelemostTransport) connectWS(attempt int) {
 		headers.Set("User-Agent", telemostUserAgent)
 		headers.Set("Origin", "https://telemost.yandex.ru")
 		utils.Debugf("[Telemost] WS dial -> %s", t.mediaServerURL)
-		conn, resp, err := websocket.DefaultDialer.Dial(t.mediaServerURL, headers)
+		conn, resp, err := telemostWSDialer().Dial(t.mediaServerURL, headers)
 		if err != nil {
 			status := 0
 			if resp != nil {
@@ -1161,7 +1161,7 @@ func newTelemostSubscriberAPI() (*webrtc.API, error) {
 	}
 	if envOrDefault("TELEMOST_SUB_BWE", "0") == "0" {
 		utils.Debugf("[Telemost] subscriber BWE feedback DISABLED (baseline)")
-		return webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine)), nil
+		return webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithSettingEngine(telemostSettingEngine())), nil
 	}
 	// Register ONLY transport-cc: TWCC feedback needs the transport-wide
 	// sequence number on inbound RTP. Deliberately NOT MID or RID — pion
@@ -1200,7 +1200,7 @@ func newTelemostSubscriberAPI() (*webrtc.API, error) {
 	}
 	utils.Debugf("[Telemost] subscriber BWE feedback ENABLED (TWCC+RR, nack=%s)",
 		envOrDefault("TELEMOST_SUB_NACK", "0"))
-	return webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(ir)), nil
+	return webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(telemostSettingEngine())), nil
 }
 
 func (t *TelemostTransport) initPublisherPC() error {
@@ -1227,7 +1227,7 @@ func (t *TelemostTransport) initPublisherPC() error {
 	if err != nil {
 		return err
 	}
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithSettingEngine(telemostSettingEngine()))
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("create publisher PC: %w", err)

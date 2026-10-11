@@ -23,6 +23,10 @@ func ProtectedHTTPTransport() *http.Transport {
 	return &http.Transport{DialContext: dialer.DialContext, ForceAttemptHTTP2: true}
 }
 
+func ProtectedListenConfig() *net.ListenConfig {
+	return &net.ListenConfig{Control: protectControl}
+}
+
 func SetProtector(fn func(fd int) bool) {
 	protectFD = fn
 }
