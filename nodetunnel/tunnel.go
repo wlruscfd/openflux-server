@@ -78,6 +78,26 @@ func WindowBytesFor(transportName string) int {
 	return 0
 }
 
+func JitterySpuriousLoss(transportName string) bool {
+	switch transportName {
+	case "mts", "boards", "telemost":
+		return true
+	}
+	return false
+}
+
+func (t *TCPTunnel) TuneFor(transportName string) {
+	if w := WindowBytesFor(transportName); w > 0 {
+		t.LimitWindow(w)
+	}
+	if JitterySpuriousLoss(transportName) {
+		noRecovery := tcpip.TCPRecovery(0)
+		if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &noRecovery); err != nil {
+			utils.Debugf("[TUNNEL] Failed to disable RACK/dup-ack loss detection: %v", err)
+		}
+	}
+}
+
 func (t *TCPTunnel) LimitWindow(bytes int) {
 	if bytes < 32768 {
 		bytes = 32768
@@ -142,11 +162,6 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 	minRTO := tcpip.TCPMinRTOOption(1500 * time.Millisecond)
 	if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &minRTO); err != nil {
 		utils.Debugf("[TUNNEL] Failed to set min RTO: %v", err)
-	}
-
-	noRecovery := tcpip.TCPRecovery(0)
-	if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &noRecovery); err != nil {
-		utils.Debugf("[TUNNEL] Failed to disable RACK/dup-ack loss detection: %v", err)
 	}
 
 	tunnelEP := NewTunnelLinkEndpoint()

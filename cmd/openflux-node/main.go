@@ -157,9 +157,7 @@ func main() {
 	}
 
 	tun := nodetunnel.NewTCPTunnelMode(trans, *exitNode, exitMode)
-	if w := nodetunnel.WindowBytesFor(*transportType); w > 0 {
-		tun.LimitWindow(w)
-	}
+	tun.TuneFor(*transportType)
 	// Read back the tunnel's actual mode: raw mode silently falls back to proxy mode if raw-socket creation fails.
 	exitMode = tun.ExitMode()
 

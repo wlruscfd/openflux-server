@@ -637,9 +637,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		return nil, err
 	}
 	tun := nodetunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
-	if w := nodetunnel.WindowBytesFor(k.Transport); w > 0 {
-		tun.LimitWindow(w)
-	}
+	tun.TuneFor(k.Transport)
 	if portIdx >= 0 {
 		tun.SetPortRange(portStart, portEnd)
 	}

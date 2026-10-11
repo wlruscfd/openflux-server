@@ -313,6 +313,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			return
 		}
 		utils.Debugf("[M-DOCS] WebSocket connected")
+		conn.EnableWriteCompression(false)
 
 		writeQueue := make(chan []byte, t.GetConfig().MaxQueueSize)
 		if existingSession != nil {
