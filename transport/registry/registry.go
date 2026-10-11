@@ -101,8 +101,8 @@ func New(typ, url string, params map[string]interface{}, o Options) (transport.T
 // so the carrier always runs as a striped group of lanes (participants of the
 // same conference). params:
 //
-//	"stripes"     a fixed lane count (default telemostLanes), or "auto": start
-//	              at 3 and add lanes while they stay saturated
+//	"stripes"     a fixed lane count, or "auto" (the default): start at one
+//	              lane and add lanes while they stay saturated
 //	"stripes_max" upper bound for auto (default 11)
 //	"cookies"     Yandex cookie header, only needed to create a conference
 //
@@ -119,17 +119,15 @@ func newTelemost(url string, params map[string]interface{}, o Options) transport
 		}
 		return ""
 	}
-	n, auto := telemostLanes, false
+	n, auto := 1, true
 	st := str("stripes")
 	if e := os.Getenv("TELEMOST_STRIPES"); e != "" { // debugging override
 		st = e
 	}
 	switch {
-	case st == "auto":
-		n, auto = 3, true
-	case st != "":
+	case st != "" && st != "auto":
 		if v, err := strconv.Atoi(st); err == nil && v >= 1 {
-			n = v
+			n, auto = v, false
 		}
 	}
 	maxLanes, _ := strconv.Atoi(str("stripes_max"))
@@ -139,11 +137,6 @@ func newTelemost(url string, params map[string]interface{}, o Options) transport
 	g := yandex.NewTelemostGroup(str("cookies"), url, n, o.IsExit, o.Base)
 	return transport.NewStripedTransportAuto(g.Lanes(), g, maxLanes, auto)
 }
-
-// telemostLanes is the lane count of a Telemost carrier unless its profile
-// says otherwise: five streams, about five times what one carries. Both ends
-// run the same count, so the two sides of a tunnel pair lane for lane.
-const telemostLanes = 5
 
 // roleParam reads a role flag a profile may carry as a bool or as "true".
 func roleParam(params map[string]interface{}, key string, def bool) bool {

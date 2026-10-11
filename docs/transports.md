@@ -15,6 +15,7 @@ engine for writing more without touching Go at all - see
 | `oneme` | MAX/OneMe (WebRTC DataChannel) | Needs `--maxToken` / `--maxUid`; cannot be shared via a link (the token belongs to one account). |
 | `cupsonline` | Cups.online (Centrifugo rooms) | The exit prints a base64 room list; pass it to the client via `--url`. |
 | `mailru` | Mail.ru Docs (WebSocket) | Accepts a bare weblink (`AbCdEfGh1/IjKlMnOp2`) or a full `https://cloud.mail.ru/public/...` URL. |
+| `telemost` | Yandex Telemost (WebRTC video via the SFU) | Pass the conference link `https://telemost.yandex.ru/j/...`. Starts on one lane and adds lanes under load (`OPENFLUX_TELEMOST_LANES=auto\|N`, `OPENFLUX_TELEMOST_MAX_LANES`); publishes at 30 fps while idle (`TELEMOST_IDLE_FPS`). Roughly 3% of a core per lane, so keep clients per key low. No end-to-end encryption layer yet. |
 | `direct` | Plain TCP to the exit | Sessions only; needs the exit's port reachable from the client. |
 | `script` | Signed JS (goja) transport | Sessions only (needs `--encryption-key-file`); see [scripted-transports.md](scripted-transports.md). |
 

@@ -590,7 +590,7 @@ URL = YOUR_YANDEX_DOC_URL
 |------|----------|--------------|----------|
 | `--role` | `-r` | `client` | `client` \| `exit` \| `bench-send` \| `bench-sink` |
 | `--inbound` | `-i` | (платформа) | `tun` (macOS/Windows через Wintun) \| `socks5` |
-| `--transport` | `-t` | `yandex` | `yandex` \| `vyandex` \| `boards` \| `oneme` \| `cupsonline` \| `mailru` |
+| `--transport` | `-t` | `yandex` | `yandex` \| `vyandex` \| `boards` \| `oneme` \| `cupsonline` | `mailru` | `telemost` |\| `mailru` |
 | `--mode` | `-m` | `l3` | Режим выходной ноды: `l3` \| `l4` |
 | `--codec` | `-c` | `batched` | `batched` \| `legacy` |
 | `--url` | `-u` | `http://#` | URL документа |

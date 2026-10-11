@@ -12,7 +12,7 @@ with inline examples.
 |------|-------|---------|-------------|
 | `--role` | `-r` | `client` | `client` \| `exit` \| `bench-send` \| `bench-sink` |
 | `--inbound` | `-i` | (platform) | `tun` (macOS/Windows via Wintun) \| `socks5` |
-| `--transport` | `-t` | `yandex` | `yandex` \| `vyandex` \| `boards` \| `oneme` \| `cupsonline` \| `mailru` \| `direct` \| `script` |
+| `--transport` | `-t` | `yandex` | `yandex` \| `vyandex` \| `boards` \| `oneme` \| `cupsonline` \| `mailru` \| `telemost` \| `direct` \| `script` |
 | `--mode` | `-m` | `l3` | Exit-node mode: `l3` \| `l4`; client: `stream` (the mode without a server, with `--transport=cupsonline\|mailru`, `--inbound=tun` for the full tunnel - see [phpbox.md](phpbox.md)) |
 | `--codec` | `-c` | `batched` | `batched` \| `legacy` |
 | `--url` | `-u` | `http://#` | Document URL |

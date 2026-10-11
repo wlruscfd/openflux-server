@@ -70,7 +70,7 @@ func WindowBytesFor(transportName string) int {
 	switch transportName {
 	case "mts":
 		return 512 * 1024
-	case "boards":
+	case "boards", "telemost":
 		return 1024 * 1024
 	}
 	return 0

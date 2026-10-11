@@ -69,7 +69,7 @@ func appendLog(message string) {
 
 // Start connects the packet transport in classic single-transport mode.
 // transportType is "yandex" (default when empty), "vyandex", "boards",
-// "mailru", "cupsonline" or "oneme". documentURL is required for all but
+// "mailru", "cupsonline", "telemost" or "oneme". documentURL is required for all but
 // "oneme", which instead needs maxToken (and optionally maxUid). codec is
 // "batched" (default, zstd+coalescing, matches the CLI's --codec=batched) or
 // "legacy" (per-packet LZ4; both peers must agree). It returns an empty
