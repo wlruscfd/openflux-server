@@ -41,7 +41,7 @@ type Protector interface {
 type Config struct {
 	Mode string `json:"mode"` // must be "manual" - see buildTransport
 
-	Transport string `json:"transport"` // "yandex" (default), "volga", "max", "boards", "mailru", "mts", or "yandex_multistream"
+	Transport string `json:"transport"` // "yandex" (default), "volga", "max", "boards", "mailru", "mts", "telemost", or "yandex_multistream"
 	DocURL    string `json:"doc_url"`   // yandex, volga
 	MaxToken  string `json:"max_token"` // max: your MAX account's own auth token
 	MaxUID    int64  `json:"max_uid"`   // max: the contact's user ID to place the call to
@@ -372,6 +372,11 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 			return nil, fmt.Errorf("doc_url is required")
 		}
 		return wrapGeneric(mts.NewTransport(cfg.DocURL, transportConfig), cfg), nil
+	case "telemost":
+		if cfg.DocURL == "" {
+			return nil, fmt.Errorf("doc_url is required")
+		}
+		return yandex.NewTelemostBatched(cfg.DocURL, false, transportConfig), nil
 	case "yandex_multistream":
 		if len(cfg.DocURLs) < 2 {
 			return nil, fmt.Errorf("yandex_multistream requires at least 2 doc_urls")

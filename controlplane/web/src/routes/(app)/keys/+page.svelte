@@ -111,6 +111,7 @@
 		boards: 'keys.docUrlBoards',
 		mailru: 'keys.docUrlMailru',
 		mts: 'keys.docUrlMts',
+		telemost: 'keys.docUrlTelemost',
 		direct: 'keys.docUrlDirect'
 	};
 	const docPlaceholder: Record<string, string> = {
@@ -120,6 +121,7 @@
 		boards: 'keys.docUrlPhBoards',
 		mailru: 'keys.docUrlPhMailru',
 		mts: 'keys.docUrlPhMts',
+		telemost: 'keys.docUrlPhTelemost',
 		direct: 'keys.docUrlPhDirect'
 	};
 	const docLabelFor = (tr: string) => t(docLabel[tr] ?? 'keys.docUrlGeneric');
@@ -452,6 +454,7 @@
 					<option value="boards">boards</option>
 					<option value="mailru">mailru</option>
 					<option value="mts">mts</option>
+					<option value="telemost">telemost</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>
@@ -638,6 +641,7 @@
 					<option value="boards">boards</option>
 					<option value="mailru">mailru</option>
 					<option value="mts">mts</option>
+					<option value="telemost">telemost</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>
