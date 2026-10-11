@@ -419,7 +419,7 @@ func (a *App) handleSetKeyEnabled(enabled bool) http.HandlerFunc {
 				return
 			}
 			urls := k.DocURLs
-			if len(urls) == 0 {
+			if len(urls) == 0 && transportTakesDocument(k.Transport) {
 				urls = []string{k.DocURL}
 			}
 			// Guarded: holds a DB-level advisory lock on urls for the check and the enable together, so two concurrent re-enable requests can't both pass the check before either commits.

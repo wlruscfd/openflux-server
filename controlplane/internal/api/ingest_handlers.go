@@ -21,6 +21,10 @@ type createKeyRequest struct {
 
 const transportYandexMultistream = "yandex_multistream"
 
+const transportCupsOnline = "cupsonline"
+
+func transportTakesDocument(transport string) bool { return transport != transportCupsOnline }
+
 type createdKey struct {
 	ID       string `json:"id"`
 	Token    string `json:"token"`
@@ -79,6 +83,11 @@ func createKeyHandler(a *App, w http.ResponseWriter, r *http.Request, forcedOwne
 			}
 			urls = req.DocURLs
 			req.DocURL = "" // ignore a stray doc_url - doc_urls is authoritative for this transport
+		} else if !transportTakesDocument(req.Transport) {
+			// cupsonline's exit creates its own rooms, so the key carries no document and the
+			// doc_url uniqueness check below would only ever compare empty strings.
+			urls = nil
+			req.DocURLs = nil
 		} else {
 			if req.DocURL == "" {
 				writeError(w, http.StatusBadRequest, "doc_url is required for every key")

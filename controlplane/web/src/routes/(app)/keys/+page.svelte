@@ -60,6 +60,7 @@
 	let limitGb = $state('');
 	let creating = $state(false);
 	const isMultistream = $derived(transport === 'yandex_multistream');
+	const transportNeedsDocUrl = $derived(transport !== 'cupsonline');
 
 	// result (fresh token / deeplink)
 	let result = $state<CreateKeyResult | RotateKeyResult | null>(null);
@@ -101,6 +102,7 @@
 	let editBusy = $state(false);
 	let editError = $state<string | null>(null);
 	const editIsMultistream = $derived(editTransport === 'yandex_multistream');
+	const editTransportNeedsDocUrl = $derived(editTransport !== 'cupsonline');
 
 	let listError = $state<string | null>(null);
 
@@ -200,7 +202,7 @@
 		try {
 			result = await api.createKey({
 				label: label.trim() || undefined,
-				doc_url: isMultistream ? undefined : docUrl.trim(),
+				doc_url: isMultistream || !docUrl.trim() ? undefined : docUrl.trim(),
 				doc_urls: isMultistream ? parsedDocUrls : undefined,
 				transport: transport || undefined,
 				e2e_encryption: e2eEncryption,
@@ -341,7 +343,7 @@
 					return;
 				}
 				body.doc_urls = parsed;
-			} else {
+			} else if (editTransportNeedsDocUrl) {
 				if (!editDocUrl.trim()) {
 					editError = docLabelFor(editTransport);
 					editBusy = false;
@@ -442,7 +444,7 @@
 					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(transport)} *</span>
 					<textarea class="input" rows="3" bind:value={docUrls} placeholder={t('keys.docUrlsPhYandex')}></textarea>
 				</label>
-			{:else}
+			{:else if transportNeedsDocUrl}
 				<label class="block">
 					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(transport)} *</span>
 					<input class="input" bind:value={docUrl} placeholder={docPlaceholderFor(transport)} />
@@ -654,7 +656,7 @@
 					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(editTransport)} *</span>
 					<textarea class="input" rows="3" bind:value={editDocUrls} placeholder={t('keys.docUrlsPhYandex')}></textarea>
 				</label>
-			{:else}
+			{:else if editTransportNeedsDocUrl}
 				<label class="block">
 					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(editTransport)} *</span>
 					<input class="input" bind:value={editDocUrl} placeholder={docPlaceholderFor(editTransport)} />
