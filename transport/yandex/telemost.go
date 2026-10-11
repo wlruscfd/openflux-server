@@ -3227,3 +3227,12 @@ func (t *TelemostTransport) runDataChannelProbe() {
 		time.Sleep(time.Second)
 	}
 }
+
+func (t *TelemostTransport) ForceReconnect() {
+	t.connMu.Lock()
+	c := t.conn
+	t.connMu.Unlock()
+	if c != nil {
+		_ = c.Close()
+	}
+}

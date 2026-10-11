@@ -1632,3 +1632,11 @@ func (t *CupsonlineTransport) ApplyCookies(values map[string]string) error {
 	}
 	return nil
 }
+
+func (t *CupsonlineTransport) ForceReconnect() {
+	for _, ws := range t.wss {
+		if c := ws.currentConn(); c != nil {
+			_ = c.Close()
+		}
+	}
+}

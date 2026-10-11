@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func slowCursorNums(t *testing.T, raw []byte) (string, []uint64) {
@@ -195,4 +196,23 @@ func TestSendRefusesPastTheQueueBound(t *testing.T) {
 	if err := w.Send(pkt); err != nil {
 		t.Fatalf("a drained queue must accept again: %v", err)
 	}
+}
+
+func TestForceReconnectBringsChannelsBack(t *testing.T) {
+	newFakeCups(t)
+	cfg := fastConfig()
+	exit, client := startPair(t, cfg)
+	before := uint64(0)
+	for _, ws := range client.wss {
+		before += ws.stats.reconnects.Load()
+	}
+	client.ForceReconnect()
+	waitFor(t, 10*time.Second, "channels reconnect", func() bool {
+		n := uint64(0)
+		for _, ws := range client.wss {
+			n += ws.stats.reconnects.Load()
+		}
+		return n > before && allConnected(client)
+	})
+	deliver(t, client, exit, []byte("after reconnect"), 10*time.Second)
 }

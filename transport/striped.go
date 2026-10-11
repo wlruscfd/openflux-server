@@ -1554,3 +1554,10 @@ func (s *StripedTransport) eventLoop() {
 		}
 	}
 }
+
+func (s *StripedTransport) ForceReconnect() {
+	lanes, _ := s.snapshotLanes()
+	for _, l := range lanes {
+		ForceReconnect(l)
+	}
+}
