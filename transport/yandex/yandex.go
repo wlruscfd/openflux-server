@@ -801,8 +801,7 @@ func (t *YandexDocsTransport) sendBatch(session *DocSession, batch [][]byte) {
 		t.debugf("-> %d bytes (%d packets)\n", len(framed), len(batch))
 	}
 
-	payload := base64.StdEncoding.EncodeToString(framed)
-	msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
+	msg := cursorMessage(framed)
 
 	if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
 		t.debugf("Write error: %v", err)
@@ -820,8 +819,7 @@ func (t *YandexDocsTransport) sendZstdBatch(session *DocSession, batch [][]byte)
 		t.debugf("-> %d bytes (%d packets, zstd batch)\n", len(framed), len(batch))
 	}
 
-	payload := base64.StdEncoding.EncodeToString(framed)
-	msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
+	msg := cursorMessage(framed)
 
 	if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
 		t.debugf("Write error: %v", err)
@@ -845,8 +843,7 @@ func (t *YandexDocsTransport) sendEncryptedZstdBatch(session *DocSession, batch 
 		t.debugf("-> %d bytes (%d packets, encrypted zstd batch)\n", len(ciphertext), len(batch))
 	}
 
-	payload := base64.StdEncoding.EncodeToString(ciphertext)
-	msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
+	msg := cursorMessage(ciphertext)
 
 	if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
 		t.debugf("Write error: %v", err)
@@ -859,12 +856,15 @@ func (t *YandexDocsTransport) sendSingle(session *DocSession, packet []byte) {
 		t.debugf("-> %d bytes (unbatched)\n", len(packet))
 	}
 
-	payload := base64.StdEncoding.EncodeToString(packet)
-	msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
+	msg := cursorMessage(packet)
 
 	if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
 		t.debugf("Write error: %v", err)
 	}
+}
+
+func cursorMessage(raw []byte) string {
+	return fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(raw), base64.StdEncoding.EncodeToString(raw))
 }
 
 func (t *YandexDocsTransport) markSent(data []byte) {
@@ -1114,6 +1114,8 @@ func (t *YandexDocsTransport) extractBase64String(response string) string {
 // ExtractBase64 pulls the packet payload out of a server frame: from a
 // saveChanges message's excelAdditionalInfo, otherwise from a cursor field.
 // Pure, and exported so the JS port can be compared with it.
+var cursorPayloadRe = regexp.MustCompile(`"cursor":"([0-9]+);([^"]+)"`)
+
 func ExtractBase64(response string) string {
 	if strings.Contains(response, "saveChanges") {
 		marker := `"excelAdditionalInfo":"`
@@ -1128,11 +1130,21 @@ func ExtractBase64(response string) string {
 		return response[left : left+right]
 	}
 
-	// Anchored on our own literal "18;" marker (see sendBatch/sendSingle/etc.), not just any cursor value with a semicolon - a real participant's own cursor broadcast (this is a real collaborative doc, other Yandex users' cursors go out the same "cursor" field) matched the old, looser pattern too, handing their cursor position to CallReceive as if it were tunnel data.
-	re := regexp.MustCompile(`"cursor":"18;([^"]+)"`)
-	matches := re.FindStringSubmatch(response)
-	if len(matches) > 1 {
-		return matches[1]
+	// A real participant's own cursor broadcast goes out the same "cursor" field, so a value only counts as ours when its numeric prefix is the decoded packet length (or the legacy fixed 18) or it is a keepalive.
+	matches := cursorPayloadRe.FindStringSubmatch(response)
+	if len(matches) > 2 {
+		prefix, payload := matches[1], matches[2]
+		if strings.HasPrefix(payload, "---KA---") {
+			return payload
+		}
+		if n, err := strconv.Atoi(prefix); err == nil {
+			if n == 18 {
+				return payload
+			}
+			if raw, derr := base64.StdEncoding.DecodeString(payload); derr == nil && len(raw) == n {
+				return payload
+			}
+		}
 	}
 	return ""
 }

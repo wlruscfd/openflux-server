@@ -29,7 +29,10 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
-const mailruUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
+// Mail.ru rejects the old Chrome/137 UA on the WebSocket upgrade with HTTP 409
+// on some edge nodes; a current Firefox UA is accepted for both the API and the
+// WebSocket. Reported by @Shiller70 (issue #164).
+const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
@@ -274,8 +277,14 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		}
 
 		dialer := websocket.Dialer{
-			HandshakeTimeout: 15 * time.Second,
-			NetDialContext:   transport.ProtectedHTTPTransport().DialContext,
+			// Mail.ru's nginx answers 409 Conflict to an upgrade that does
+			// not offer permessage-deflate. gorilla/websocket only sends the
+			// Sec-WebSocket-Extensions header when compression is enabled, so
+			// without this the handshake was rejected before any auth and the
+			// carrier never came up. Reported by @pirsasha (issue #163).
+			EnableCompression: true,
+			HandshakeTimeout:  15 * time.Second,
+			NetDialContext:    transport.ProtectedHTTPTransport().DialContext,
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", mailruUserAgent)
