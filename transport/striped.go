@@ -378,6 +378,10 @@ func (s *StripedTransport) eligible(i int, now time.Time) bool {
 	return !now.Before(readyAt[i])
 }
 
+func StripeFrameIsControl(b []byte) bool {
+	return len(b) > 0 && b[0] == stripeCtlMagic
+}
+
 // pull is lane i's send clock asking for up to max frames.
 func (s *StripedTransport) pull(i int, max int) [][]byte {
 	if i >= maxStripeLanes || max <= 0 {

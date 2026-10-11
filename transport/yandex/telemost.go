@@ -168,6 +168,7 @@ type TelemostTransport struct {
 	slotKey atomic.Uint32
 
 	writeQueue chan []byte
+	lastDataNs atomic.Int64
 
 	// frameMu guards frameQueue, the frames waiting for the next tick of the
 	// publish clock (publishFPS). Tunnel bytes are buffered here rather than
@@ -1623,6 +1624,10 @@ func (t *TelemostTransport) handlePublisherAnswer(ans map[string]interface{}) {
 // ceiling. 120fps cuts the per-hop wait to under 9ms.
 var publishFPS = envIntDefault("TELEMOST_FPS", 120)
 
+var idlePublishFPS = min(envIntDefault("TELEMOST_IDLE_FPS", 30), publishFPS)
+
+const idleHoldAfterData = 4 * time.Second
+
 // rtpTimestampStep is how much the RTP timestamp advances per frame, at the
 // standard 90kHz video clock rate. It has to track publishFPS: advancing it
 // by a step sized for a different rate would make the stream's timestamps
@@ -1681,7 +1686,6 @@ func (t *TelemostTransport) runPublisherKeepalive() {
 	frameInterval := time.Second / time.Duration(publishFPS)
 	ticker := time.NewTicker(frameInterval)
 	defer ticker.Stop()
-
 	// The exit emits the self-identifying filler so the client can tell the
 	// exit's stream apart from its own self-view echo.
 	filler := keepalivePayload
@@ -1694,8 +1698,12 @@ func (t *TelemostTransport) runPublisherKeepalive() {
 			continue
 		}
 		frames := t.popFrames()
+		carriesData := false
 		if src := t.frameSource.Load(); src != nil && len(frames) < maxFramesPerTick {
 			for _, w := range (*src)(maxFramesPerTick - len(frames)) {
+				if !transport.StripeFrameIsControl(w) {
+					carriesData = true
+				}
 				frags, err := FragmentFrame(w)
 				if err != nil {
 					utils.Debugf("[Telemost] pulled frame: %v [%s]", err, roleStr(t.isExitNode))
@@ -1703,6 +1711,20 @@ func (t *TelemostTransport) runPublisherKeepalive() {
 				}
 				frames = append(frames, frags...)
 			}
+		}
+		now := time.Now()
+		if carriesData {
+			t.lastDataNs.Store(now.UnixNano())
+		}
+		busyUntil := time.Unix(0, t.lastDataNs.Load()).Add(idleHoldAfterData)
+		wantFPS := idlePublishFPS
+		if now.Before(busyUntil) {
+			wantFPS = publishFPS
+		}
+		if want := time.Second / time.Duration(wantFPS); want != frameInterval {
+			frameInterval = want
+			ticker.Reset(frameInterval)
+			utils.Debugf("[Telemost] publish rate -> %d fps [%s]", wantFPS, roleStr(t.isExitNode))
 		}
 		if len(frames) == 0 {
 			frames = [][]byte{filler(sent)}
@@ -2618,6 +2640,9 @@ var maxQueuedFrames = envIntDefault("TELEMOST_QUEUE", 4096)
 func (t *TelemostTransport) enqueueFrame(wire []byte) {
 	if len(wire) == 0 {
 		return
+	}
+	if !transport.StripeFrameIsControl(wire) {
+		t.lastDataNs.Store(time.Now().UnixNano())
 	}
 	frags, err := FragmentFrame(wire)
 	if err != nil {
