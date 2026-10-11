@@ -32,14 +32,14 @@ func scanKey(row pgx.Row) (model.Key, error) {
 	err := row.Scan(
 		&k.ID, &k.Label, &k.Transport, &k.DocURL, &k.DocURLs, &k.E2EEncryption, &k.AssignedNodeID, &k.Enabled,
 		&k.TrafficLimitBytes, &k.BytesSentTotal, &k.BytesReceivedTotal, &k.OwnerRef,
-		&k.ExpiresAt, &k.CreatedAt, &k.UpdatedAt, &k.LastSeenAt, &k.FinalExitNodeID, &k.RelayPort,
+		&k.ExpiresAt, &k.CreatedAt, &k.UpdatedAt, &k.LastSeenAt, &k.FinalExitNodeID, &k.RelayPort, &k.DeletedAt,
 	)
 	return k, err
 }
 
 const keyColumns = `id, label, transport, doc_url, doc_urls, e2e_encryption, assigned_node_id, enabled,
 	traffic_limit_bytes, bytes_sent_total, bytes_received_total, owner_ref,
-	expires_at, created_at, updated_at, last_seen_at, final_exit_node_id, relay_port`
+	expires_at, created_at, updated_at, last_seen_at, final_exit_node_id, relay_port, deleted_at`
 
 // CreateKey best-effort assigns the new key to whichever active node currently carries the fewest enabled keys, keeping the fleet roughly balanced without a separate scheduler.
 func (s *Store) CreateKey(ctx context.Context, p CreateKeyParams) (model.Key, error) {
@@ -613,7 +613,7 @@ func getKeyByIDTx(ctx context.Context, tx pgx.Tx, id string) (model.Key, error) 
 // DeleteKey soft-deletes: the row (and its lifetime usage totals) stays for the panel's charts, since every other Store method already treats deleted_at IS NOT NULL as "doesn't exist".
 // The cookie jar has no such reason to survive - it's dropped outright so a deleted key's captcha session doesn't linger in the database forever.
 func (s *Store) DeleteKey(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE keys SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
+	tag, err := s.pool.Exec(ctx, `UPDATE keys SET deleted_at = now(), enabled = false, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
 		return fmt.Errorf("delete key: %w", err)
 	}

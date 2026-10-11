@@ -31,6 +31,7 @@ type Key struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	LastSeenAt         *time.Time
+	DeletedAt          *time.Time
 	// FinalExitNodeID/RelayPort make this a cascade: the assigned (entry) node relays to this node's RelayPort instead of dialing the real internet itself. Both nil/unset means today's direct-exit behavior.
 	FinalExitNodeID *string
 	RelayPort       *int

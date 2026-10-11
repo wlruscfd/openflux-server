@@ -171,6 +171,8 @@
   .badge.ok { background: rgba(91,141,239,.14); color: var(--accent-strong); }
   .badge.off { background: rgba(239,90,90,.14); color: var(--danger); }
   .badge.warn { background: rgba(224,172,43,.14); color: var(--warn); }
+    .row-deleted td { opacity: .5; }
+    button[disabled] { opacity: .45; cursor: not-allowed; }
 
   .token-box {
     display: flex; align-items: center; gap: 10px;
@@ -426,20 +428,25 @@
     api("/v1/admin/keys" + qs).then(function (keys) {
       var el = document.getElementById("keys-table");
       if (!keys || keys.length === 0) { el.innerHTML = '<div class="empty">Пока нет ключей.</div>'; return; }
-      var rows = keys.map(function (k) {
+var rows = keys.map(function (k) {
         var used = formatBytes((k.BytesSentTotal || 0) + (k.BytesReceivedTotal || 0));
         var limit = k.TrafficLimitBytes != null ? formatBytes(k.TrafficLimitBytes) : "без лимита";
+        var gone = !!k.DeletedAt;
+        var badge = gone
+          ? '<span class="badge off">удалён</span>'
+          : '<span class="badge ' + (k.Enabled ? "ok" : "off") + '">' + (k.Enabled ? "активен" : "отключён") + '</span>';
+        var actions = gone
+          ? '<button class="secondary small" disabled>удалён</button>'
+          : '<button class="secondary small" data-toggle="' + k.ID + '" data-enabled="' + k.Enabled + '">' + (k.Enabled ? "Отключить" : "Включить") + "</button>" +
+            '<button class="secondary small" data-rotate="' + k.ID + '">Сменить токен</button>' +
+            '<button class="danger small" data-delete="' + k.ID + '">Удалить</button>';
         return (
-          "<tr><td>" + escapeHtml(k.Label || "(без названия)") + "</td><td>" + shortId(k.ID) + "</td>" +
+          "<tr" + (gone ? ' class="row-deleted"' : "") + "><td>" + escapeHtml(k.Label || "(без названия)") + "</td><td>" + shortId(k.ID) + "</td>" +
           "<td>" + escapeHtml(k.Transport) + "</td>" +
-          '<td><span class="badge ' + (k.Enabled ? "ok" : "off") + '">' + (k.Enabled ? "включён" : "отключён") + "</span></td>" +
+          "<td>" + badge + "</td>" +
           "<td>" + used + " / " + limit + "</td>" +
-          "<td>" + escapeHtml(k.OwnerRef || "—") + "</td>" +
-          '<td class="actions">' +
-          '<button class="secondary small" data-toggle="' + k.ID + '" data-enabled="' + k.Enabled + '">' + (k.Enabled ? "Отключить" : "Включить") + "</button>" +
-          '<button class="secondary small" data-rotate="' + k.ID + '">Обновить токен</button>' +
-          '<button class="danger small" data-delete="' + k.ID + '">Удалить</button>' +
-          "</td></tr>"
+          "<td>" + escapeHtml(k.OwnerRef || "-") + "</td>" +
+          '<td class="actions">' + actions + "</td></tr>"
         );
       }).join("");
       el.innerHTML =
