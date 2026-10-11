@@ -612,6 +612,22 @@ func getKeyByIDTx(ctx context.Context, tx pgx.Tx, id string) (model.Key, error) 
 
 // DeleteKey soft-deletes: the row (and its lifetime usage totals) stays for the panel's charts, since every other Store method already treats deleted_at IS NOT NULL as "doesn't exist".
 // The cookie jar has no such reason to survive - it's dropped outright so a deleted key's captcha session doesn't linger in the database forever.
+// SetKeyDocURLFromNode records the room list a cupsonline exit created. The first write fills the
+// empty doc_url; after that only the same list may replace it, so a stray list cannot hijack a
+// key that is already serving rooms.
+func (s *Store) SetKeyDocURLFromNode(ctx context.Context, keyID, docURL string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE keys SET doc_url = $2, updated_at = now()
+		WHERE id = $1
+		  AND deleted_at IS NULL
+		  AND (doc_url = '' OR doc_url = $2)
+	`, keyID, docURL)
+	if err != nil {
+		return false, fmt.Errorf("set key doc url from node: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) DeleteKey(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE keys SET deleted_at = now(), enabled = false, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {

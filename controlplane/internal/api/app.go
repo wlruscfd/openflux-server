@@ -69,6 +69,7 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("GET /v1/nodes/keys", a.withNodeToken(a.handleNodeListKeys))
 	mux.HandleFunc("GET /v1/nodes/relay-keys", a.withNodeToken(a.handleNodeListRelayKeys))
 	mux.HandleFunc("POST /v1/nodes/{id}/usage", a.withNodeToken(a.handleNodeUsage))
+	mux.HandleFunc("POST /v1/nodes/{id}/room-list", a.withNodeToken(a.handleNodeRoomList))
 	mux.HandleFunc("POST /v1/nodes/{id}/heartbeat", a.withNodeToken(a.handleNodeHeartbeat))
 
 	mux.HandleFunc("POST /v1/resolve", a.withRateLimit(a.handleResolve))

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"net/http"
 
 	"openflux-control/internal/model"
@@ -97,6 +98,56 @@ type usageDeltaRequest struct {
 
 type reportUsageRequest struct {
 	Deltas []usageDeltaRequest `json:"deltas"`
+}
+
+type roomListRequest struct {
+	RoomList string `json:"room_list"`
+}
+
+const maxRoomListBytes = 8 * 1024
+
+func (a *App) handleNodeRoomList(w http.ResponseWriter, r *http.Request) {
+	n := nodeFromContext(r.Context())
+
+	var req roomListRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	list := strings.TrimSpace(req.RoomList)
+	if list == "" {
+		writeError(w, http.StatusBadRequest, "room_list must not be empty")
+		return
+	}
+	if len(list) > maxRoomListBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "room list too large")
+		return
+	}
+
+	k, err := a.Store.GetKeyByID(r.Context(), r.PathValue("id"))
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "key not found")
+		return
+	}
+	if err != nil {
+		writeInternalError(w, r, "get key failed", err)
+		return
+	}
+	if k.AssignedNodeID == nil || *k.AssignedNodeID != n.ID {
+		writeError(w, http.StatusForbidden, "key is not assigned to this node")
+		return
+	}
+	if k.Transport != transportCupsOnline {
+		writeError(w, http.StatusBadRequest, "room lists are only for cupsonline keys")
+		return
+	}
+
+	changed, err := a.Store.SetKeyDocURLFromNode(r.Context(), k.ID, list)
+	if err != nil {
+		writeInternalError(w, r, "store room list failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": changed, "doc_url": list})
 }
 
 func (a *App) handleNodeUsage(w http.ResponseWriter, r *http.Request) {

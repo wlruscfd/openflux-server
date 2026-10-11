@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -108,6 +109,27 @@ func (c *ControlClient) ReportUsage(ctx context.Context, deltas []UsageDelta) ([
 		return nil, err
 	}
 	return out.DisabledNow, nil
+}
+
+type reportRoomListRequest struct {
+	RoomList string `json:"room_list"`
+}
+
+type reportRoomListResponse struct {
+	Changed bool   `json:"changed"`
+	DocURL  string `json:"doc_url"`
+}
+
+func (c *ControlClient) ReportRoomList(ctx context.Context, keyID, list string) (bool, error) {
+	if list == "" {
+		return false, nil
+	}
+	var out reportRoomListResponse
+	path := "/v1/nodes/me/keys/" + url.PathEscape(keyID) + "/room-list"
+	if err := c.do(ctx, http.MethodPost, path, reportRoomListRequest{RoomList: list}, &out); err != nil {
+		return false, err
+	}
+	return out.Changed, nil
 }
 
 func (c *ControlClient) Heartbeat(ctx context.Context) error {

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/p1neappleXpress/OpenFlux/transport"
@@ -595,6 +596,29 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			return nil, fmt.Errorf("key %s: cupsonline transport doesn't support e2e_encryption yet", k.ID)
 		}
 		trans = transport.NewBatchedTransport(cupsonline.NewCupsonlineTransport(k.DocURL, transport.DefaultConfig(), false))
+		if rl, ok := trans.(interface {
+			OnRoomList(func(string))
+			RoomList() string
+		}); ok {
+			// The exit creates its own rooms, so the key starts with an empty doc_url and the
+			// client has nothing to open until the list is published. Reported only on an actual
+			// change, so a reconnect storm does not turn into a report storm.
+			var last atomic.Pointer[string]
+			rl.OnRoomList(func(list string) {
+				if list == "" || last.Load() == &list {
+					return
+				}
+				published := list
+				last.Store(&published)
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					if _, err := o.client.ReportRoomList(ctx, k.ID, published); err != nil {
+						utils.Debugf("[NODEAGENT] key %s (%s): room list report failed: %v", k.ID, k.Transport, err)
+					}
+				}()
+			})
+		}
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {
