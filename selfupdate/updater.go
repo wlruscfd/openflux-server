@@ -58,7 +58,7 @@ func New(cfg Config) *Updater {
 		cfg.IndexURL = DefaultIndexURL
 	}
 	if cfg.Interval <= 0 {
-		cfg.Interval = 6 * time.Hour
+		cfg.Interval = 10 * time.Minute
 	}
 	if cfg.Probation <= 0 {
 		cfg.Probation = 10 * time.Minute
@@ -115,7 +115,7 @@ func (u *Updater) Run(ctx context.Context) {
 		} else if applied {
 			return
 		}
-		timer.Reset(u.cfg.Interval + time.Duration(rand.Int63n(int64(10*time.Minute))))
+		timer.Reset(u.cfg.Interval + time.Duration(rand.Int63n(int64(2*time.Minute))))
 	}
 }
 
