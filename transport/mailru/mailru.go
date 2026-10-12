@@ -34,6 +34,9 @@ import (
 // WebSocket. Reported by @Shiller70 (issue #164).
 const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
+// The nginx in front of the document server answers the WebSocket upgrade with 409 unless it carries Accept-Language, whatever the UA.
+const mailruAcceptLanguage = "ru-RU,ru;q=0.9,en;q=0.8"
+
 // Mail.ru turns away a browser that is too old, so a pinned UA stops working as soon as the browsers move on.
 // The candidates follow the browsers' four-week release cycle, newest first; a 409 moves to the next one.
 func mailruUserAgents(now time.Time) []string {
@@ -312,6 +315,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", t.userAgent())
+		headers.Set("Accept-Language", mailruAcceptLanguage)
 		headers.Set("Origin", "https://docs.datacloudmail.ru")
 
 		utils.Debugf("[M-DOCS] WebSocket dial %s", info.WsURL)
@@ -691,6 +695,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("User-Agent", t.userAgent())
+	req.Header.Set("Accept-Language", mailruAcceptLanguage)
 	req.Header.Set("X-Api-Version", "4")
 	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
 
