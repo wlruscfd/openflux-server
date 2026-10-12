@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/p1neappleXpress/OpenFlux/gateway"
+	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/socks5"
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
@@ -17,7 +18,6 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/transport/mts"
 	"github.com/p1neappleXpress/OpenFlux/transport/oneme"
 	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
-	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
@@ -50,6 +50,9 @@ type Config struct {
 	DocURLs []string `json:"doc_urls,omitempty"`
 
 	KeyToken string `json:"key_token,omitempty"`
+
+	// ScriptsDir holds the dynamic transport packages; empty means the built-in transports only.
+	ScriptsDir string `json:"scripts_dir,omitempty"`
 
 	E2EEncryption bool `json:"e2e_encryption,omitempty"`
 
@@ -363,7 +366,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapGeneric(mailru.NewMailruDocsTransport(cfg.DocURL, transportConfig), cfg), nil
+		return withOverlay(cfg, "mailru", func() transport.Transport {
+			return mailru.NewMailruDocsTransport(cfg.DocURL, transportConfig)
+		}, func(inner transport.Transport) transport.Transport { return wrapGeneric(inner, cfg) }), nil
 	case "mts":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")

@@ -23,6 +23,7 @@ import (
 	"github.com/pierrec/lz4/v4"
 
 	"github.com/p1neappleXpress/OpenFlux/netbind"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
@@ -675,8 +676,14 @@ func hostSetState(t *ScriptTransport) func(goja.FunctionCall) goja.Value {
 			errMsg = v.String()
 		}
 		t.SetConnected(state == "connected")
-		if state == "reconnecting" {
+		switch state {
+		case "connected":
+			t.EmitEvent(transport.EventConnected, "1")
+		case "connecting":
+			t.EmitEvent(transport.EventConnecting, "1")
+		case "reconnecting":
 			t.RecordReconnect()
+			t.EmitEvent(transport.EventRetrying, "1|0|script|"+errMsg)
 		}
 		t.setLastState(state, errMsg)
 		utils.Debugf("[SCRIPT:%s] state=%s err=%q", t.name, state, errMsg)
