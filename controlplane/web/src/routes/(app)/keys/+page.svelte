@@ -271,21 +271,34 @@
 
 	function openCascade(k: KeyDTO) {
 		cascadeKey = k;
-		cascadeSelection = k.FinalExitNodeID ?? '';
+		cascadeSelection = k.WarpProfileID ? 'warp' : (k.FinalExitNodeID ?? '');
 	}
 
 	function saveCascade() {
 		if (!cascadeKey || cascadeBusy) return;
 		cascadeBusy = true;
-		api
-			.patchKeyFinalExit(cascadeKey.ID, cascadeSelection || null)
+		const key = cascadeKey;
+		const apply = async () => {
+			if (cascadeSelection === 'warp') {
+				if (key.FinalExitNodeID) await api.patchKeyFinalExit(key.ID, null);
+				await api.patchKeyWarp(key.ID, true);
+			} else if (cascadeSelection) {
+				await api.patchKeyFinalExit(key.ID, cascadeSelection);
+			} else {
+				if (key.WarpProfileID) await api.patchKeyWarp(key.ID, false);
+				if (key.FinalExitNodeID) await api.patchKeyFinalExit(key.ID, null);
+			}
+		};
+		apply()
 			.then(async () => {
 				toast.ok(t('keys.cascadeUpdated'));
 				cascadeKey = null;
 				await loadKeys();
 			})
 			.catch((e) => {
-				if (e instanceof ApiError && e.status === 409) {
+				if (e instanceof ApiError && e.status === 502) {
+					toast.error(t('keys.cascadeWarpFailed'));
+				} else if (e instanceof ApiError && e.status === 409) {
 					toast.error(t('keys.cascadeNoAddress'));
 				} else {
 					toast.error(errText(e));
@@ -584,7 +597,7 @@
 								</button>
 									<button
 										type="button"
-										class="of-iconbtn {k.FinalExitNodeID ? '!text-[var(--of-accent)]' : ''}"
+										class="of-iconbtn {k.FinalExitNodeID || k.WarpProfileID ? '!text-[var(--of-accent)]' : ''}"
 										title={t('keys.cascade')}
 										onclick={() => openCascade(k)}
 									>
@@ -719,10 +732,14 @@
 		onClose={() => (cascadeKey = null)}
 	>
 		<p class="mb-3 text-xs text-[var(--of-muted)]">{t('keys.cascadeHint')}</p>
+		{#if cascadeSelection === 'warp'}
+			<p class="mb-3 text-xs text-[var(--of-muted)]">{t('keys.cascadeWarpHint')}</p>
+		{/if}
 		<label class="block">
 			<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.cascade')}</span>
 			<select class="input" bind:value={cascadeSelection}>
 				<option value="">{t('keys.cascadeDirect')}</option>
+				<option value="warp">{t('keys.cascadeWarp')}</option>
 				{#each cascadeTargets as n (n.ID)}
 					<option value={n.ID}>{n.Name}</option>
 				{/each}

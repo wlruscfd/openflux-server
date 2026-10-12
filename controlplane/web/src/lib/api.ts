@@ -37,6 +37,7 @@ export interface KeyDTO {
 	LastSeenAt: string | null;
 	FinalExitNodeID: string | null;
 	RelayPort: number | null;
+	WarpProfileID: string | null;
 }
 
 export type KeyStatus = 'active' | 'disabled' | 'over_quota' | 'expired';
@@ -223,6 +224,8 @@ export const api = {
 		request('PATCH', `/v1/admin/keys/${id}`, { traffic_limit_bytes: limitBytes }),
 	patchKeyFinalExit: (id: string, finalExitNodeId: string | null) =>
 		request<KeyDTO>('PATCH', `/v1/admin/keys/${id}/final-exit`, { final_exit_node_id: finalExitNodeId }),
+	patchKeyWarp: (id: string, enabled: boolean) =>
+		request<KeyDTO>('PATCH', `/v1/admin/keys/${id}/warp`, { enabled }),
 	deleteKey: (id: string) => request<null>('DELETE', `/v1/admin/keys/${id}`),
 	keyUsage: (id: string, days: number) =>
 		request<UsageDayDTO[]>('GET', `/v1/admin/keys/${id}/usage?days=${days}`),

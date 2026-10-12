@@ -85,6 +85,19 @@ To set one up:
    allocates a dedicated UDP port for the link (a small 41000-41999 range, separate from raw mode's
    own per-key port allocation) and both nodes pick it up on their next poll.
 
+### Cascade through Cloudflare WARP
+
+On the same cascade control, pick **Cloudflare WARP**. The key's exit node then reaches the internet
+through a WireGuard link to Cloudflare WARP, so the sites it visits see a WARP address instead of the
+node's own. Nothing needs preparing: the first time you enable it the panel registers an anonymous
+WARP account with Cloudflare (this server must reach `api.cloudflareclient.com`), keeps the private key
+sealed like a key token and hands the config to the node on its next poll. Every key shares that one
+account unless you register more (`POST /v1/admin/warp`, `PATCH /v1/admin/keys/{id}/warp` with
+`{"enabled": true, "profile_id": "..."}`).
+
+A key uses either a final-exit node or WARP, not both. If the WARP link cannot come up the key stays
+down rather than leaking out of the node's own address. TCP only, like every other exit.
+
 Not supported yet: combining a cascade with `e2e_encryption` on the same key (the final-exit node
 would need to own the E2E unwrap instead of the entry node, and that boundary isn't wired up) - the
 entry node refuses to start that key rather than getting it wrong. Usage accounting is unaffected

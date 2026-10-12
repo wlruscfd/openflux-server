@@ -1,8 +1,8 @@
 package api
 
 import (
-	"strings"
 	"net/http"
+	"strings"
 
 	"openflux-control/internal/model"
 	"openflux-control/internal/store"
@@ -22,6 +22,17 @@ type nodeKeyResponse struct {
 	// RelayHost/RelayPort are set only when this key is cascaded - present means "relay to this address instead of dialing the real internet yourself".
 	RelayHost *string `json:"relay_host,omitempty"`
 	RelayPort *int    `json:"relay_port,omitempty"`
+	// Warp present means this key's exit dials the internet through that WireGuard peer instead of from the node's own address.
+	Warp *nodeWarpResponse `json:"warp,omitempty"`
+}
+
+type nodeWarpResponse struct {
+	ProfileID     string `json:"profile_id"`
+	PrivateKey    string `json:"private_key"`
+	PeerPublicKey string `json:"peer_public_key"`
+	Endpoint      string `json:"endpoint"`
+	AddressV4     string `json:"address_v4"`
+	AddressV6     string `json:"address_v6,omitempty"`
 }
 
 func (a *App) handleNodeListKeys(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +52,13 @@ func (a *App) handleNodeListKeys(w http.ResponseWriter, r *http.Request) {
 				token = t
 			}
 		}
+		var warpCfg *nodeWarpResponse
+		if k.Warp != nil {
+			if priv, err := a.Cipher.Decrypt(k.Warp.PrivateKeyEnc); err == nil {
+				warpCfg = &nodeWarpResponse{ProfileID: k.Warp.ProfileID, PrivateKey: priv, PeerPublicKey: k.Warp.PeerPublicKey,
+					Endpoint: k.Warp.Endpoint, AddressV4: k.Warp.AddressV4, AddressV6: k.Warp.AddressV6}
+			}
+		}
 		out = append(out, nodeKeyResponse{
 			ID:                k.ID,
 			DocURL:            k.DocURL,
@@ -52,6 +70,7 @@ func (a *App) handleNodeListKeys(w http.ResponseWriter, r *http.Request) {
 			E2EEncryption:     k.E2EEncryption,
 			RelayHost:         k.RelayHost,
 			RelayPort:         k.RelayPort,
+			Warp:              warpCfg,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -35,6 +35,8 @@ type Key struct {
 	// FinalExitNodeID/RelayPort make this a cascade: the assigned (entry) node relays to this node's RelayPort instead of dialing the real internet itself. Both nil/unset means today's direct-exit behavior.
 	FinalExitNodeID *string
 	RelayPort       *int
+	// WarpProfileID makes the assigned node dial the internet through that Cloudflare WARP account.
+	WarpProfileID *string
 }
 
 func (k Key) BytesUsedTotal() int64 {

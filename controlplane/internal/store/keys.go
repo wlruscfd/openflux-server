@@ -32,14 +32,14 @@ func scanKey(row pgx.Row) (model.Key, error) {
 	err := row.Scan(
 		&k.ID, &k.Label, &k.Transport, &k.DocURL, &k.DocURLs, &k.E2EEncryption, &k.AssignedNodeID, &k.Enabled,
 		&k.TrafficLimitBytes, &k.BytesSentTotal, &k.BytesReceivedTotal, &k.OwnerRef,
-		&k.ExpiresAt, &k.CreatedAt, &k.UpdatedAt, &k.LastSeenAt, &k.FinalExitNodeID, &k.RelayPort, &k.DeletedAt,
+		&k.ExpiresAt, &k.CreatedAt, &k.UpdatedAt, &k.LastSeenAt, &k.FinalExitNodeID, &k.RelayPort, &k.DeletedAt, &k.WarpProfileID,
 	)
 	return k, err
 }
 
 const keyColumns = `id, label, transport, doc_url, doc_urls, e2e_encryption, assigned_node_id, enabled,
 	traffic_limit_bytes, bytes_sent_total, bytes_received_total, owner_ref,
-	expires_at, created_at, updated_at, last_seen_at, final_exit_node_id, relay_port, deleted_at`
+	expires_at, created_at, updated_at, last_seen_at, final_exit_node_id, relay_port, deleted_at, warp_profile_id`
 
 // CreateKey best-effort assigns the new key to whichever active node currently carries the fewest enabled keys, keeping the fleet roughly balanced without a separate scheduler.
 func (s *Store) CreateKey(ctx context.Context, p CreateKeyParams) (model.Key, error) {
@@ -100,14 +100,27 @@ type NodeKey struct {
 	// RelayPort/RelayHost are set only for a cascaded key: the entry node relays to RelayHost:RelayPort instead of dialing the real internet itself.
 	RelayPort *int
 	RelayHost *string
+	// Warp is set when the key's exit dials through a WARP account.
+	Warp *NodeWarp
+}
+
+type NodeWarp struct {
+	ProfileID     string
+	PrivateKeyEnc []byte
+	PeerPublicKey string
+	Endpoint      string
+	AddressV4     string
+	AddressV6     string
 }
 
 func (s *Store) ListActiveKeysForNode(ctx context.Context, nodeID string) ([]NodeKey, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id, k.doc_url, k.doc_urls, k.transport, k.traffic_limit_bytes, k.bytes_sent_total, k.bytes_received_total,
-		       k.token_enc, k.e2e_encryption, k.relay_port, fx.public_address
+		       k.token_enc, k.e2e_encryption, k.relay_port, fx.public_address,
+		       wp.id, wp.private_key_enc, wp.peer_public_key, wp.endpoint, wp.address_v4, wp.address_v6
 		FROM keys k
 		LEFT JOIN nodes fx ON fx.id = k.final_exit_node_id
+		LEFT JOIN warp_profiles wp ON wp.id = k.warp_profile_id
 		WHERE k.assigned_node_id = $1 AND k.enabled = true AND k.deleted_at IS NULL
 		ORDER BY k.created_at
 	`, nodeID)
@@ -119,9 +132,20 @@ func (s *Store) ListActiveKeysForNode(ctx context.Context, nodeID string) ([]Nod
 	var out []NodeKey
 	for rows.Next() {
 		var k NodeKey
+		var w struct {
+			id, peer, endpoint, v4, v6 *string
+			priv                       []byte
+		}
 		if err := rows.Scan(&k.ID, &k.DocURL, &k.DocURLs, &k.Transport, &k.TrafficLimitBytes,
-			&k.BytesSentTotal, &k.BytesReceivedTotal, &k.TokenEnc, &k.E2EEncryption, &k.RelayPort, &k.RelayHost); err != nil {
+			&k.BytesSentTotal, &k.BytesReceivedTotal, &k.TokenEnc, &k.E2EEncryption, &k.RelayPort, &k.RelayHost,
+			&w.id, &w.priv, &w.peer, &w.endpoint, &w.v4, &w.v6); err != nil {
 			return nil, fmt.Errorf("scan node key: %w", err)
+		}
+		if w.id != nil && w.peer != nil && w.endpoint != nil && w.v4 != nil {
+			k.Warp = &NodeWarp{ProfileID: *w.id, PrivateKeyEnc: w.priv, PeerPublicKey: *w.peer, Endpoint: *w.endpoint, AddressV4: *w.v4}
+			if w.v6 != nil {
+				k.Warp.AddressV6 = *w.v6
+			}
 		}
 		out = append(out, k)
 	}
@@ -209,7 +233,7 @@ func (s *Store) SetKeyFinalExit(ctx context.Context, id string, finalExitNodeID 
 	}
 
 	row := tx.QueryRow(ctx, `
-		UPDATE keys SET final_exit_node_id = $1, relay_port = $2, updated_at = now()
+		UPDATE keys SET final_exit_node_id = $1, relay_port = $2, warp_profile_id = NULL, updated_at = now()
 		WHERE id = $3 AND deleted_at IS NULL
 		RETURNING `+keyColumns, *finalExitNodeID, nextPort, id)
 	k, err := scanKey(row)

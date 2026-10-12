@@ -1,6 +1,7 @@
 package nodetunnel
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -51,6 +52,7 @@ func ParseExitMode(s string) (ExitMode, error) {
 }
 
 type TCPTunnel struct {
+	dialOut     func(ctx context.Context, network, addr string) (net.Conn, error)
 	gvisorStack *stack.Stack
 	tunnelEP    *TunnelLinkEndpoint
 	transport   transport.Transport
@@ -110,6 +112,19 @@ func (t *TCPTunnel) LimitWindow(bytes int) {
 	if err := t.gvisorStack.SetTransportProtocolOption(tcp.ProtocolNumber, &snd); err != nil {
 		utils.Debugf("[TUNNEL] Failed to cap send buffer: %v", err)
 	}
+}
+
+func (t *TCPTunnel) SetOutboundDialer(dial func(ctx context.Context, network, addr string) (net.Conn, error)) {
+	t.dialOut = dial
+}
+
+func (t *TCPTunnel) dialExit(dest string) (net.Conn, error) {
+	if t.dialOut == nil {
+		return net.DialTimeout("tcp", dest, 10*time.Second)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return t.dialOut(ctx, "tcp", dest)
 }
 
 func (t *TCPTunnel) SetPacketTrace(on bool) {
@@ -256,7 +271,7 @@ func (t *TCPTunnel) handleExitTCP(r *tcp.ForwarderRequest) {
 	go func() {
 		defer func() { <-exitTCPSemaphore }()
 
-		remote, err := net.DialTimeout("tcp", dest, 10*time.Second)
+		remote, err := t.dialExit(dest)
 		if err != nil {
 			utils.Debugf("[EXIT] proxy dial %s failed: %v", dest, err)
 			local.Close()

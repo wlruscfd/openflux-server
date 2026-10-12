@@ -63,6 +63,10 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("POST /v1/admin/keys/{id}/enable", a.withAdmin(a.handleSetKeyEnabled(true)))
 	mux.HandleFunc("POST /v1/admin/keys/{id}/disable", a.withAdmin(a.handleSetKeyEnabled(false)))
 	mux.HandleFunc("PATCH /v1/admin/keys/{id}/final-exit", a.withAdmin(a.handlePatchKeyFinalExit))
+	mux.HandleFunc("PATCH /v1/admin/keys/{id}/warp", a.withAdmin(a.handlePatchKeyWarp))
+	mux.HandleFunc("GET /v1/admin/warp", a.withAdmin(a.handleListWarp))
+	mux.HandleFunc("POST /v1/admin/warp", a.withAdmin(a.handleCreateWarp))
+	mux.HandleFunc("DELETE /v1/admin/warp/{id}", a.withAdmin(a.handleDeleteWarp))
 
 	mux.HandleFunc("POST /v1/ingest/keys", a.withIngestToken(a.handleIngestKeys))
 

@@ -19,6 +19,7 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
 	"github.com/p1neappleXpress/OpenFlux/transport/mts"
 	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
+	"github.com/p1neappleXpress/OpenFlux/warp"
 	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
@@ -65,6 +66,7 @@ type worker struct {
 	e2e           bool
 	token         string
 	cookieHash    string
+	warpFP        string
 
 	lastSent uint64
 	lastRecv uint64
@@ -78,6 +80,9 @@ func (w *worker) driftedFrom(k RemoteKey) bool {
 		return true
 	}
 	if w.e2e && w.token != k.Token {
+		return true
+	}
+	if w.warpFP != warpFingerprint(k) {
 		return true
 	}
 	if len(w.docURLs) != len(k.DocURLs) {
@@ -108,6 +113,9 @@ type Orchestrator struct {
 	ports            portAllocator
 	lastSummaryAt    time.Time
 	warnedAt         map[string]time.Time
+
+	warpMu sync.Mutex
+	warps  map[string]*warp.Tunnel
 }
 
 func NewOrchestrator(cfg Config) *Orchestrator {
@@ -119,6 +127,7 @@ func NewOrchestrator(cfg Config) *Orchestrator {
 		client:           NewControlClient(cfg.ControlURL, cfg.NodeToken),
 		cfg:              cfg,
 		workers:          make(map[string]*worker),
+		warps:            make(map[string]*warp.Tunnel),
 		relayExitWorkers: make(map[string]*relayExitWorker),
 		ports:            portAllocator{rangeSize: rangeSize},
 	}
@@ -189,6 +198,7 @@ func (o *Orchestrator) Run(ctx context.Context) {
 		o.stopRelayExitWorker(w)
 		delete(o.relayExitWorkers, id)
 	}
+	o.closeWarps(nil)
 }
 
 func (o *Orchestrator) pollLoop(ctx context.Context) {
@@ -386,6 +396,7 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		o.workers[k.ID] = w
 		o.mu.Unlock()
 	}
+	o.sweepWarps()
 	o.logSummary()
 }
 
@@ -638,10 +649,24 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	}
 	tun := nodetunnel.NewTCPTunnelMode(trans, true, o.cfg.ExitMode)
 	tun.TuneFor(k.Transport)
+	warpFP := warpFingerprint(k)
+	if k.Warp != nil {
+		wt, werr := o.warpTunnel(k.Warp)
+		if werr != nil {
+			trans.Stop()
+			tun.Close()
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, fmt.Errorf("key %s: warp: %w", k.ID, werr)
+		}
+		tun.SetOutboundDialer(wt.DialContext)
+	}
 	if portIdx >= 0 {
 		tun.SetPortRange(portStart, portEnd)
 	}
 	return &worker{
+		warpFP:        warpFP,
 		trans:         trans,
 		tun:           tun,
 		docURL:        label,
@@ -767,6 +792,58 @@ func (o *Orchestrator) heartbeatLoop(ctx context.Context) {
 			if err := o.client.Heartbeat(ctx); err != nil {
 				utils.Debugf("[NODEAGENT] heartbeat failed: %v", err)
 			}
+		}
+	}
+}
+
+func warpConfig(w *RemoteWarp) warp.Config {
+	return warp.Config{ProfileID: w.ProfileID, PrivateKey: w.PrivateKey, PeerPublicKey: w.PeerPublicKey,
+		Endpoint: w.Endpoint, AddressV4: w.AddressV4, AddressV6: w.AddressV6}
+}
+
+func warpFingerprint(k RemoteKey) string {
+	if k.Warp == nil || k.IsRelayed() {
+		return ""
+	}
+	return warpConfig(k.Warp).Fingerprint()
+}
+
+// warpTunnel shares one WireGuard link per WARP profile across every key that uses it; a key never falls back to the node's own address when the link is down.
+func (o *Orchestrator) warpTunnel(w *RemoteWarp) (*warp.Tunnel, error) {
+	cfg := warpConfig(w)
+	fp := cfg.Fingerprint()
+	o.warpMu.Lock()
+	defer o.warpMu.Unlock()
+	if t, ok := o.warps[fp]; ok {
+		return t, nil
+	}
+	t, err := warp.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	o.warps[fp] = t
+	return t, nil
+}
+
+func (o *Orchestrator) sweepWarps() {
+	o.mu.Lock()
+	inUse := make(map[string]bool, len(o.workers))
+	for _, w := range o.workers {
+		if w.warpFP != "" {
+			inUse[w.warpFP] = true
+		}
+	}
+	o.mu.Unlock()
+	o.closeWarps(inUse)
+}
+
+func (o *Orchestrator) closeWarps(keep map[string]bool) {
+	o.warpMu.Lock()
+	defer o.warpMu.Unlock()
+	for fp, t := range o.warps {
+		if !keep[fp] {
+			t.Close()
+			delete(o.warps, fp)
 		}
 	}
 }

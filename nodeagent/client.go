@@ -40,6 +40,17 @@ type RemoteKey struct {
 	// RelayHost/RelayPort set means this key is cascaded: relay to that address over UDP instead of dialing the real internet on this node.
 	RelayHost *string `json:"relay_host,omitempty"`
 	RelayPort *int    `json:"relay_port,omitempty"`
+	// Warp set means this key's exit dials the internet through that WireGuard peer instead of from this node's own address.
+	Warp *RemoteWarp `json:"warp,omitempty"`
+}
+
+type RemoteWarp struct {
+	ProfileID     string `json:"profile_id"`
+	PrivateKey    string `json:"private_key"`
+	PeerPublicKey string `json:"peer_public_key"`
+	Endpoint      string `json:"endpoint"`
+	AddressV4     string `json:"address_v4"`
+	AddressV6     string `json:"address_v6,omitempty"`
 }
 
 func (k RemoteKey) IsRelayed() bool {
