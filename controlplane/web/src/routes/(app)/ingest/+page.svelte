@@ -76,7 +76,7 @@
 
 <div class="space-y-6">
 	<div>
-		<h1 class="text-xl font-semibold text-[var(--of-ink)]">{t('ingest.title')}</h1>
+		<h1 class="text-2xl font-semibold tracking-tight text-[var(--of-ink)]">{t('ingest.title')}</h1>
 		<p class="mt-1 text-sm text-[var(--of-muted)]">{t('ingest.subtitle')}</p>
 	</div>
 

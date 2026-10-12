@@ -107,7 +107,7 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<h1 class="text-xl font-semibold text-[var(--of-ink)]">{t('nodes.title')}</h1>
+	<h1 class="text-2xl font-semibold tracking-tight text-[var(--of-ink)]">{t('nodes.title')}</h1>
 
 	<Card title={t('nodes.registerTitle')}>
 		<form

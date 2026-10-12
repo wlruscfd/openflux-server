@@ -40,7 +40,7 @@
 		</div>
 
 		<form
-			class="rounded-xl border border-[var(--of-line)] bg-[var(--of-panel)] p-5 shadow-lg"
+			class="of-card p-6"
 			onsubmit={(e) => {
 				e.preventDefault();
 				submit();
@@ -68,7 +68,7 @@
 
 			<button
 				type="submit"
-				class="mt-4 w-full rounded-lg bg-[var(--of-accent)] py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+				class="of-btn-primary mt-5 w-full rounded-[0.7rem] py-3 text-sm font-semibold transition-all disabled:opacity-50"
 				disabled={busy || !token.trim()}
 			>
 				{busy ? t('generic.loading') : t('login.submit')}

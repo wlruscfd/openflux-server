@@ -42,7 +42,7 @@
 		<div
 			role="dialog"
 			aria-modal="true"
-			class="max-h-[92vh] sm:my-auto w-full overflow-y-auto rounded-t-2xl border border-[var(--of-line)] bg-[var(--of-panel)] shadow-2xl sm:rounded-xl {wide
+			class="max-h-[92vh] sm:my-auto w-full overflow-y-auto rounded-t-3xl border border-[var(--of-line-strong)] bg-[var(--of-panel)] shadow-2xl sm:rounded-2xl {wide
 				? 'max-w-2xl'
 				: 'max-w-md'}"
 		>

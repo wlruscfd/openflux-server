@@ -6,50 +6,53 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /* --- palette ------------------------------------------------------------- */
-/* Raw tokens flip on [data-theme]; utilities below reference them via
- * `@theme inline` so Tailwind emits `background-color: var(--of-*)`, and
- * each element resolves the var against the nearest overriding element. */
 :root {
-	--of-bg: #0b0f15;
-	--of-surface: #141a24;
-	--of-surface-2: #1a2231;
-	--of-raise: #1a2231;
-	--of-line: #223047;
-	--of-line-strong: #2c3d5a;
-	--of-ink: #e7ebf3;
-	--of-muted: #8a95a8;
-	--of-accent: #5b8def;
-	--of-accent-strong: #7ba2f5;
-	--of-accent-ink: #071224;
-	--of-ok: #38d59a;
-	--of-warn: #f0b429;
-	--of-danger: #ef5a5a;
+	--of-bg: #070a0f;
+	--of-panel: #0e131b;
+	--of-surface: #0e131b;
+	--of-surface-2: #141b26;
+	--of-raise: #141b26;
+	--of-line: #1c2531;
+	--of-line-strong: #2a3647;
+	--of-ink: #eef2f8;
+	--of-muted: #8c98ab;
+	--of-accent: #7c9cff;
+	--of-accent-2: #b794ff;
+	--of-accent-strong: #a3b8ff;
+	--of-accent-ink: #0a1020;
+	--of-ok: #3ddc97;
+	--of-warn: #fbbf24;
+	--of-danger: #ff6b6b;
 	--of-code: #c9d6f0;
-	--of-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -18px rgba(0, 0, 0, 0.6);
+	--of-glow: rgba(124, 156, 255, 0.35);
+	--of-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 18px 40px -26px rgba(0, 0, 0, 0.9);
 }
 
 html[data-theme='light'] {
-	--of-bg: #f4f6f9;
+	--of-bg: #f3f5fa;
+	--of-panel: #ffffff;
 	--of-surface: #ffffff;
-	--of-surface-2: #f1f3f7;
-	--of-raise: #f1f3f7;
-	--of-line: #e2e7ef;
-	--of-line-strong: #ccd4e0;
-	--of-ink: #141a22;
-	--of-muted: #5b6572;
-	--of-accent: #3b72d6;
-	--of-accent-strong: #2f5fc0;
+	--of-surface-2: #f1f4f9;
+	--of-raise: #f1f4f9;
+	--of-line: #e3e8f0;
+	--of-line-strong: #cfd7e4;
+	--of-ink: #121826;
+	--of-muted: #5d6879;
+	--of-accent: #4c6ef5;
+	--of-accent-2: #8b5cf6;
+	--of-accent-strong: #3b5bdb;
 	--of-accent-ink: #ffffff;
-	--of-ok: #0f9e67;
-	--of-warn: #b27a08;
-	--of-danger: #c93434;
+	--of-ok: #0e9f6e;
+	--of-warn: #b7791f;
+	--of-danger: #d64545;
 	--of-code: #27406e;
-	--of-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 16px 32px -20px rgba(16, 24, 40, 0.18);
+	--of-glow: rgba(76, 110, 245, 0.28);
+	--of-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 18px 34px -24px rgba(16, 24, 40, 0.2);
 }
 
 @theme inline {
 	--color-bg: var(--of-bg);
-	--color-panel: var(--of-surface);
+	--color-panel: var(--of-panel);
 	--color-panel-2: var(--of-surface-2);
 	--color-line: var(--of-line);
 	--color-line-strong: var(--of-line-strong);
@@ -62,7 +65,7 @@ html[data-theme='light'] {
 	--color-warn: var(--of-warn);
 	--color-danger: var(--of-danger);
 	--color-code: var(--of-code);
-	--font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	--font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 	--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
@@ -77,11 +80,22 @@ html[data-theme='light'] {
 body {
 	@apply bg-bg text-ink font-sans antialiased;
 	background-image:
-		radial-gradient(1000px 480px at 12% -12%, rgba(91, 141, 239, 0.08), transparent 60%),
-		radial-gradient(800px 420px at 100% 0%, rgba(91, 141, 239, 0.05), transparent 55%);
+		radial-gradient(900px 420px at 0% -8%, color-mix(in srgb, var(--of-accent) 14%, transparent), transparent 62%),
+		radial-gradient(760px 380px at 100% -6%, color-mix(in srgb, var(--of-accent-2) 11%, transparent), transparent 60%);
+	background-repeat: no-repeat;
+	font-feature-settings: 'cv11', 'ss01';
+	letter-spacing: -0.005em;
 }
 html[data-theme='light'] body {
-	background-image: none;
+	background-image:
+		radial-gradient(900px 420px at 0% -8%, color-mix(in srgb, var(--of-accent) 9%, transparent), transparent 62%),
+		radial-gradient(760px 380px at 100% -6%, color-mix(in srgb, var(--of-accent-2) 7%, transparent), transparent 60%);
+}
+
+h1,
+h2,
+h3 {
+	letter-spacing: -0.02em;
 }
 
 ::selection {
@@ -103,49 +117,104 @@ html[data-theme='light'] body {
 	border-radius: 8px;
 }
 
-/* --- shared primitive classes -------------------------------------------- */
+/* --- surfaces ----------------------------------------------------------------- */
+.of-card {
+	border: 1px solid var(--of-line);
+	border-radius: 1rem;
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--of-ink) 3.5%, transparent), transparent 46%),
+		var(--of-panel);
+	box-shadow: var(--of-shadow);
+}
+html[data-theme='light'] .of-card {
+	background: var(--of-panel);
+}
+
+/* --- inputs -------------------------------------------------------------------- */
 .input {
-	@apply w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm text-ink outline-none transition;
-	box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+	@apply w-full text-sm text-ink outline-none transition;
+	min-height: 2.5rem;
+	padding: 0.5rem 0.8rem;
+	border-radius: 0.7rem;
+	border: 1px solid var(--of-line);
+	background: color-mix(in srgb, var(--of-ink) 4%, var(--of-panel));
+}
+html[data-theme='light'] .input {
+	background: var(--of-surface-2);
+}
+.input:hover {
+	border-color: var(--of-line-strong);
 }
 .input:focus {
 	border-color: var(--of-accent);
-	box-shadow: 0 0 0 3px color-mix(in srgb, var(--of-accent) 22%, transparent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--of-accent) 24%, transparent);
 }
 .input::placeholder {
 	color: var(--of-muted);
 	opacity: 0.7;
 }
-
-/* select inherits .input but needs a native appearance kept in place */
 select.input {
 	appearance: auto;
 }
 
-/* --- data table ----------------------------------------------------------- */
+/* --- buttons --------------------------------------------------------------------- */
+.of-btn-primary {
+	color: #fff;
+	background: linear-gradient(135deg, var(--of-accent), var(--of-accent-2));
+	box-shadow:
+		0 1px 0 rgba(255, 255, 255, 0.22) inset,
+		0 8px 20px -10px var(--of-glow);
+}
+.of-btn-primary:hover:not(:disabled) {
+	filter: brightness(1.08);
+}
+.of-btn-primary:active:not(:disabled) {
+	transform: translateY(1px);
+}
+.of-btn-secondary {
+	color: var(--of-ink);
+	border: 1px solid var(--of-line-strong);
+	background: color-mix(in srgb, var(--of-ink) 4%, transparent);
+}
+.of-btn-secondary:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--of-ink) 9%, transparent);
+}
+
+/* --- data table ----------------------------------------------------------------- */
 .of-table {
 	width: 100%;
-	border-collapse: collapse;
+	border-collapse: separate;
+	border-spacing: 0;
 	font-size: 0.875rem;
 }
 .of-table thead th {
-	padding: 0.625rem 0.875rem;
+	padding: 0.55rem 0.875rem;
 	text-align: left;
-	font-size: 0.72rem;
+	font-size: 0.68rem;
 	font-weight: 600;
-	letter-spacing: 0.04em;
+	letter-spacing: 0.07em;
 	text-transform: uppercase;
 	color: var(--of-muted);
 	border-bottom: 1px solid var(--of-line);
 	white-space: nowrap;
 }
 .of-table tbody td {
-	padding: 0.625rem 0.875rem;
-	border-bottom: 1px solid var(--of-line);
+	padding: 0.7rem 0.875rem;
+	border-bottom: 1px solid color-mix(in srgb, var(--of-line) 70%, transparent);
 	vertical-align: middle;
+	transition: background-color 0.12s;
+}
+.of-table tbody tr:hover td {
+	background: color-mix(in srgb, var(--of-ink) 3.2%, transparent);
 }
 .of-table tbody tr:last-child td {
 	border-bottom: none;
+}
+.of-table tbody td:first-child {
+	border-radius: 0.6rem 0 0 0.6rem;
+}
+.of-table tbody td:last-child {
+	border-radius: 0 0.6rem 0.6rem 0;
 }
 .of-table .num {
 	text-align: right;
@@ -156,14 +225,14 @@ select.input {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	padding: 0.375rem;
-	border-radius: 0.5rem;
+	padding: 0.4rem;
+	border-radius: 0.6rem;
 	color: var(--of-muted);
 	transition: color 0.15s, background-color 0.15s;
 }
 .of-iconbtn:hover {
 	color: var(--of-ink);
-	background: var(--of-raise);
+	background: color-mix(in srgb, var(--of-ink) 8%, transparent);
 }
 .of-iconbtn:disabled {
 	opacity: 0.4;
@@ -175,12 +244,12 @@ select.input {
 	height: 0.5rem;
 	overflow: hidden;
 	border-radius: 9999px;
-	background: var(--of-line);
+	background: color-mix(in srgb, var(--of-ink) 8%, transparent);
 }
 .of-meter-fill {
 	height: 100%;
 	border-radius: 9999px;
-	background: var(--of-accent);
+	background: linear-gradient(90deg, var(--of-accent), var(--of-accent-2));
 	transition: width 0.4s ease;
 }
 .of-meter-fill-warn {
@@ -190,24 +259,37 @@ select.input {
 	background: var(--of-danger);
 }
 
-/* --- logo wordmark ---------------------------------------------------------- */
+/* --- logo ---------------------------------------------------------------------- */
 .of-logo {
 	display: inline-flex;
 	align-items: center;
-	justify-content: center;
-	padding: 0.25rem 0.625rem;
-	border-radius: 0.5rem;
-	background: var(--of-accent);
-	color: var(--of-accent-ink);
-	font-size: 0.8rem;
+	gap: 0.5rem;
+	font-size: 1rem;
 	font-weight: 700;
-	letter-spacing: 0.02em;
+	letter-spacing: -0.02em;
+	color: var(--of-ink);
+}
+.of-logo::before {
+	content: '';
+	width: 1.7rem;
+	height: 1.7rem;
+	border-radius: 0.55rem;
+	background:
+		radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.55), transparent 42%),
+		linear-gradient(135deg, var(--of-accent), var(--of-accent-2));
+	box-shadow: 0 8px 20px -8px var(--of-glow);
 }
 .of-logo-lg {
-	padding: 0.4rem 0.9rem;
-	font-size: 1.15rem;
-	border-radius: 0.75rem;
+	font-size: 1.5rem;
+	flex-direction: column;
+	gap: 0.7rem;
 }
+.of-logo-lg::before {
+	width: 3.1rem;
+	height: 3.1rem;
+	border-radius: 1rem;
+}
+
 /* --- touch & focus ----------------------------------------------------------- */
 :where(a, button, [role='button']):focus-visible {
 	outline: 2px solid var(--of-accent);
@@ -216,7 +298,7 @@ select.input {
 @media (max-width: 639px) {
 	.input {
 		font-size: 16px;
-		min-height: 2.5rem;
+		min-height: 2.6rem;
 	}
 	.of-iconbtn {
 		padding: 0.5rem;
@@ -249,9 +331,13 @@ select.input {
 		gap: 1rem;
 		padding: 0;
 		border: none;
+		border-radius: 0;
 		text-align: right;
 		min-height: 1.5rem;
 		word-break: break-word;
+	}
+	.of-table.of-stack tbody tr:hover td {
+		background: transparent;
 	}
 	.of-table.of-stack tbody td[data-label]::before {
 		content: attr(data-label);
@@ -259,7 +345,7 @@ select.input {
 		text-align: left;
 		font-size: 0.7rem;
 		font-weight: 600;
-		letter-spacing: 0.04em;
+		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		color: var(--of-muted);
 	}
@@ -281,15 +367,48 @@ select.input {
 	}
 }
 
-/* --- bottom tab bar (phones) ------------------------------------------------------- */
+/* --- navigation ------------------------------------------------------------------ */
 .of-tabbar {
 	padding-bottom: env(safe-area-inset-bottom);
 }
 .of-page-pad {
 	padding-bottom: calc(5.25rem + env(safe-area-inset-bottom));
 }
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
 	.of-page-pad {
-		padding-bottom: 1.5rem;
+		padding-bottom: 2rem;
 	}
+}
+.of-navlink {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 0.7rem;
+	padding: 0.6rem 0.8rem;
+	border-radius: 0.75rem;
+	font-size: 0.9rem;
+	font-weight: 500;
+	color: var(--of-muted);
+	transition: color 0.15s, background-color 0.15s;
+}
+.of-navlink:hover {
+	color: var(--of-ink);
+	background: color-mix(in srgb, var(--of-ink) 5%, transparent);
+}
+.of-navlink[aria-current='page'] {
+	color: var(--of-ink);
+	background: linear-gradient(90deg, color-mix(in srgb, var(--of-accent) 20%, transparent), color-mix(in srgb, var(--of-accent-2) 6%, transparent));
+}
+.of-navlink[aria-current='page']::before {
+	content: '';
+	position: absolute;
+	left: -0.75rem;
+	top: 22%;
+	bottom: 22%;
+	width: 3px;
+	border-radius: 3px;
+	background: linear-gradient(180deg, var(--of-accent), var(--of-accent-2));
+}
+.of-navlink[aria-current='page'] svg {
+	color: var(--of-accent);
 }

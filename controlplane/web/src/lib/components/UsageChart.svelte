@@ -58,7 +58,7 @@
 
 <div class="w-full">
 	<div class="mb-2 flex items-center gap-4 text-xs text-[var(--of-muted)]">
-		<span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-[var(--of-accent)]"></span>{t('dash.down')}</span>
+		<span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm" style="background: linear-gradient(135deg, var(--of-accent), var(--of-accent-2))"></span>{t('dash.down')}</span>
 		<span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-[var(--of-warn)]"></span>{t('dash.up')}</span>
 	</div>
 
@@ -74,6 +74,12 @@
 				onpointermove={onMove}
 				onpointerleave={() => (hover = null)}
 			>
+				<defs>
+					<linearGradient id="of-recv" x1="0" y1="0" x2="0" y2="1">
+						<stop offset="0%" stop-color="var(--of-accent-2)" />
+						<stop offset="100%" stop-color="var(--of-accent)" stop-opacity="0.75" />
+					</linearGradient>
+				</defs>
 				{#each ticks as tick (tick)}
 					<line x1={PAD_L} x2={width - PAD_R} y1={y(tick)} y2={y(tick)} stroke="var(--of-line)" stroke-width="1" stroke-dasharray={tick === 0 ? undefined : '3 4'} />
 					<text x={PAD_L - 8} y={y(tick) + 3.5} text-anchor="end" fill="var(--of-muted)" font-size="10.5" class="tabular-nums">{tick === 0 ? '0' : formatBytes(tick, lang)}</text>
@@ -84,8 +90,8 @@
 					{@const yRecv = y(d.recv)}
 					{@const yTotal = y(d.sent + d.recv)}
 					<g opacity={hover === null || hover === i ? 1 : 0.55}>
-						<rect {x} y={yRecv} width={barW} height={Math.max(0, y(0) - yRecv)} fill="var(--of-accent)" />
-						<rect {x} y={yTotal} width={barW} height={Math.max(0, yRecv - yTotal)} rx="2" fill="var(--of-warn)" />
+						<rect {x} y={yRecv} width={barW} height={Math.max(0, y(0) - yRecv)} fill="url(#of-recv)" />
+						<rect {x} y={yTotal} width={barW} height={Math.max(0, yRecv - yTotal)} rx="3" fill="var(--of-warn)" opacity="0.92" />
 					</g>
 				{/each}
 

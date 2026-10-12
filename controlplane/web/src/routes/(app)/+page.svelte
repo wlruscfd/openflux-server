@@ -74,7 +74,7 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between gap-3">
-		<h1 class="text-xl font-semibold text-[var(--of-ink)]">{t('dash.overview')}</h1>
+		<h1 class="text-2xl font-semibold tracking-tight text-[var(--of-ink)]">{t('dash.overview')}</h1>
 		{#if loadError}
 			<Badge tone="danger" dot>{t('generic.error')}</Badge>
 		{/if}

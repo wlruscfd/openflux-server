@@ -427,7 +427,7 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between gap-3">
-		<h1 class="text-xl font-semibold text-[var(--of-ink)]">{t('keys.title')}</h1>
+		<h1 class="text-2xl font-semibold tracking-tight text-[var(--of-ink)]">{t('keys.title')}</h1>
 		<button type="button" class="of-iconbtn" title={t('generic.refresh')} disabled={loading} onclick={refreshAll}>
 			<RotateCcw class="h-4 w-4" />
 		</button>

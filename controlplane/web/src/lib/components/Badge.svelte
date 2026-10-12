@@ -20,7 +20,7 @@
 
 <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap {tones[tone][1]}">
 	{#if dot}
-		<span class="h-1.5 w-1.5 rounded-full {tones[tone][0]}"></span>
+		<span class="h-1.5 w-1.5 rounded-full {tones[tone][0]}" style="box-shadow: 0 0 8px currentColor"></span>
 	{/if}
 	{@render children()}
 </span>
