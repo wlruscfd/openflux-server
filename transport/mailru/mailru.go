@@ -34,6 +34,29 @@ import (
 // WebSocket. Reported by @Shiller70 (issue #164).
 const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
+// Mail.ru turns away a browser that is too old, so a pinned UA stops working as soon as the browsers move on.
+// The candidates follow the browsers' four-week release cycle, newest first; a 409 moves to the next one.
+func mailruUserAgents(now time.Time) []string {
+	weeks := func(epoch time.Time) int {
+		d := int(now.Sub(epoch).Hours() / 24)
+		return max(d-42, 0) / 28
+	}
+	ff := 143 + weeks(time.Date(2025, 9, 16, 0, 0, 0, 0, time.UTC))
+	ch := 140 + weeks(time.Date(2025, 9, 2, 0, 0, 0, 0, time.UTC))
+	firefox := func(v int) string {
+		return fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:%d.0) Gecko/20100101 Firefox/%d.0", v, v)
+	}
+	chrome := func(v int) string {
+		return fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%d.0.0.0 Safari/537.36", v)
+	}
+	return []string{firefox(ff), chrome(ch), firefox(ff - 1), chrome(ch - 1), mailruUserAgent}
+}
+
+func (t *MailruDocsTransport) userAgent() string {
+	l := mailruUserAgents(time.Now())
+	return l[int(t.uaIdx.Load())%len(l)]
+}
+
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
 // saveChangesMessageTemplate — шаблон saveChanges-сообщения в формате
@@ -161,6 +184,7 @@ type MailruDocsTransport struct {
 	session *DocSession
 
 	userCounter atomic.Int32
+	uaIdx       atomic.Int32
 	baseUserID  string
 
 	cookieJar *cookiejar.Jar
@@ -287,7 +311,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			NetDialContext:    transport.ProtectedHTTPTransport().DialContext,
 		}
 		headers := http.Header{}
-		headers.Set("User-Agent", mailruUserAgent)
+		headers.Set("User-Agent", t.userAgent())
 		headers.Set("Origin", "https://docs.datacloudmail.ru")
 
 		utils.Debugf("[M-DOCS] WebSocket dial %s", info.WsURL)
@@ -304,6 +328,9 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				}
 			}
 			utils.Debugf("[M-DOCS] WebSocket dial failed (http %d): %v", status, err)
+			if status == http.StatusConflict || status == http.StatusForbidden {
+				t.uaIdx.Add(1)
+			}
 			if body != "" {
 				err = fmt.Errorf("http %d, server said %q: %w", status, body, err)
 			} else if status != 0 {
@@ -663,7 +690,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", mailruUserAgent)
+	req.Header.Set("User-Agent", t.userAgent())
 	req.Header.Set("X-Api-Version", "4")
 	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
 
