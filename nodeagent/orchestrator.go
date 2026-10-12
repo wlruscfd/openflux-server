@@ -822,7 +822,33 @@ func (o *Orchestrator) warpTunnel(w *RemoteWarp) (*warp.Tunnel, error) {
 		return nil, err
 	}
 	o.warps[fp] = t
+	go o.watchWarp(fp, t)
 	return t, nil
+}
+
+// watchWarp says in the log, once and plainly, whether the link to Cloudflare carries traffic - a blocked UDP port shows up as slow or missing sites, not as an error.
+func (o *Orchestrator) watchWarp(fp string, t *warp.Tunnel) {
+	for attempt := 1; attempt <= 6; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ok, rtt, err := t.Probe(ctx)
+		cancel()
+		switch {
+		case err == nil && ok:
+			log.Printf("[WARP] link is up: traffic leaves as WARP, probe took %dms", rtt.Milliseconds())
+			return
+		case err == nil:
+			log.Printf("[WARP] link answers but the traffic is not WARP (attempt %d)", attempt)
+		default:
+			log.Printf("[WARP] no answer through the link (attempt %d): %v - check that this node can send UDP to Cloudflare on port 2408", attempt, err)
+		}
+		o.warpMu.Lock()
+		_, alive := o.warps[fp]
+		o.warpMu.Unlock()
+		if !alive {
+			return
+		}
+		time.Sleep(time.Duration(attempt) * 10 * time.Second)
+	}
 }
 
 func (o *Orchestrator) sweepWarps() {

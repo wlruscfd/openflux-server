@@ -6,10 +6,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/netip"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
@@ -36,7 +41,15 @@ type Tunnel struct {
 	once sync.Once
 }
 
-const mtu = 1280
+// Cloudflare sends full 1280-byte inner packets whatever MSS is advertised; a smaller MTU here drops them and the link silently stalls (measured: 1200 carries nothing, 1280 works).
+const defaultMTU = 1280
+
+func tunnelMTU() int {
+	if n, err := strconv.Atoi(os.Getenv("OPENFLUX_WARP_MTU")); err == nil && n >= 576 && n <= 1420 {
+		return n
+	}
+	return defaultMTU
+}
 
 func New(cfg Config) (*Tunnel, error) {
 	priv, err := keyHex(cfg.PrivateKey)
@@ -67,7 +80,7 @@ func New(cfg Config) (*Tunnel, error) {
 		return nil, errors.New("warp: no interface address")
 	}
 
-	tun, tnet, err := netstack.CreateNetTUN(local, []netip.Addr{netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("1.0.0.1")}, mtu)
+	tun, tnet, err := netstack.CreateNetTUN(local, []netip.Addr{netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("1.0.0.1")}, tunnelMTU())
 	if err != nil {
 		return nil, fmt.Errorf("warp netstack: %w", err)
 	}
@@ -121,4 +134,21 @@ func resolveEndpoint(ep string) (string, error) {
 		}
 	}
 	return net.JoinHostPort(ips[0].String(), port), nil
+}
+
+// Probe asks Cloudflare through the link whether the traffic really arrives as WARP, and how long the round trip takes.
+func (t *Tunnel) Probe(ctx context.Context) (bool, time.Duration, error) {
+	client := &http.Client{Transport: &http.Transport{DialContext: t.DialContext, DisableKeepAlives: true}, Timeout: 12 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://www.cloudflare.com/cdn-cgi/trace", nil)
+	if err != nil {
+		return false, 0, err
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, 0, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return strings.Contains(string(body), "warp=on"), time.Since(start), nil
 }

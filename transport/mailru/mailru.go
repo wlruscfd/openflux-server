@@ -85,6 +85,9 @@ type MailruDocsInfo struct {
 	EditorUserID string
 }
 
+// One shared transport: a fresh one per call kept an idle connection open for every fetch of every key.
+var mailruHTTP = sync.OnceValue(transport.ProtectedHTTPTransport)
+
 type DocSession struct {
 	Info       MailruDocsInfo
 	Conn       *websocket.Conn
@@ -679,7 +682,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 			return MailruDocsInfo{}, err
 		}
 	}
-	client := &http.Client{Jar: jar, Timeout: 15 * time.Second, Transport: transport.ProtectedHTTPTransport()}
+	client := &http.Client{Jar: jar, Timeout: 15 * time.Second, Transport: mailruHTTP()}
 
 	reqBody := map[string]string{
 		"x-email":  "anonym",

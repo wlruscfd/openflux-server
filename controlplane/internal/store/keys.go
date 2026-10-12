@@ -100,8 +100,9 @@ type NodeKey struct {
 	// RelayPort/RelayHost are set only for a cascaded key: the entry node relays to RelayHost:RelayPort instead of dialing the real internet itself.
 	RelayPort *int
 	RelayHost *string
-	// Warp is set when the key's exit dials through a WARP account.
-	Warp *NodeWarp
+	// Warp is set when the key's exit dials through a WARP account; WarpWanted is set whenever the panel asked for WARP, even before this node has an identity.
+	Warp       *NodeWarp
+	WarpWanted bool
 }
 
 type NodeWarp struct {
@@ -117,10 +118,11 @@ func (s *Store) ListActiveKeysForNode(ctx context.Context, nodeID string) ([]Nod
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id, k.doc_url, k.doc_urls, k.transport, k.traffic_limit_bytes, k.bytes_sent_total, k.bytes_received_total,
 		       k.token_enc, k.e2e_encryption, k.relay_port, fx.public_address,
-		       wp.id, wp.private_key_enc, wp.peer_public_key, wp.endpoint, wp.address_v4, wp.address_v6
+		       wp.id, wp.private_key_enc, wp.peer_public_key, wp.endpoint, wp.address_v4, wp.address_v6,
+		       k.warp_profile_id IS NOT NULL
 		FROM keys k
 		LEFT JOIN nodes fx ON fx.id = k.final_exit_node_id
-		LEFT JOIN warp_profiles wp ON wp.id = k.warp_profile_id
+		LEFT JOIN warp_profiles wp ON k.warp_profile_id IS NOT NULL AND wp.node_id = k.assigned_node_id
 		WHERE k.assigned_node_id = $1 AND k.enabled = true AND k.deleted_at IS NULL
 		ORDER BY k.created_at
 	`, nodeID)
@@ -138,7 +140,7 @@ func (s *Store) ListActiveKeysForNode(ctx context.Context, nodeID string) ([]Nod
 		}
 		if err := rows.Scan(&k.ID, &k.DocURL, &k.DocURLs, &k.Transport, &k.TrafficLimitBytes,
 			&k.BytesSentTotal, &k.BytesReceivedTotal, &k.TokenEnc, &k.E2EEncryption, &k.RelayPort, &k.RelayHost,
-			&w.id, &w.priv, &w.peer, &w.endpoint, &w.v4, &w.v6); err != nil {
+			&w.id, &w.priv, &w.peer, &w.endpoint, &w.v4, &w.v6, &k.WarpWanted); err != nil {
 			return nil, fmt.Errorf("scan node key: %w", err)
 		}
 		if w.id != nil && w.peer != nil && w.endpoint != nil && w.v4 != nil {

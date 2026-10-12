@@ -38,6 +38,8 @@ type nodeWarpResponse struct {
 func (a *App) handleNodeListKeys(w http.ResponseWriter, r *http.Request) {
 	n := nodeFromContext(r.Context())
 
+	a.ensureNodeWarp(r, n.ID)
+
 	keys, err := a.Store.ListActiveKeysForNode(r.Context(), n.ID)
 	if err != nil {
 		writeInternalError(w, r, "list keys failed", err)
@@ -46,6 +48,9 @@ func (a *App) handleNodeListKeys(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]nodeKeyResponse, 0, len(keys))
 	for _, k := range keys {
+		if k.WarpWanted && k.Warp == nil {
+			continue
+		}
 		var token string
 		if len(k.TokenEnc) > 0 {
 			if t, err := a.Cipher.Decrypt(k.TokenEnc); err == nil {

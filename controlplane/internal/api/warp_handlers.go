@@ -1,7 +1,9 @@
 package api
 
 import (
+	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"openflux-control/internal/store"
@@ -39,6 +41,10 @@ func (a *App) handleListWarp(w http.ResponseWriter, r *http.Request) {
 
 // registerWarp opens a new WARP account at Cloudflare and keeps it, with the private key sealed like a key token.
 func (a *App) registerWarp(r *http.Request, name string) (store.WarpProfile, error) {
+	return a.registerWarpFor(r, name, nil)
+}
+
+func (a *App) registerWarpFor(r *http.Request, name string, nodeID *string) (store.WarpProfile, error) {
 	acc, err := a.registerWarpAccount(r)
 	if err != nil {
 		return store.WarpProfile{}, err
@@ -49,7 +55,7 @@ func (a *App) registerWarp(r *http.Request, name string) (store.WarpProfile, err
 	}
 	return a.Store.CreateWarpProfile(r.Context(), store.WarpProfile{
 		Name: name, DeviceID: acc.DeviceID, PrivateKeyEnc: enc, PeerPublicKey: acc.PeerPublicKey,
-		Endpoint: acc.Endpoint, AddressV4: acc.AddressV4, AddressV6: acc.AddressV6,
+		Endpoint: acc.Endpoint, AddressV4: acc.AddressV4, AddressV6: acc.AddressV6, NodeID: nodeID,
 	})
 }
 
@@ -133,5 +139,20 @@ func (a *App) handlePatchKeyWarp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "this key already cascades through a final-exit node - clear that first")
 	default:
 		writeInternalError(w, r, "set key warp failed", err)
+	}
+}
+
+var nodeWarpMu sync.Mutex
+
+// ensureNodeWarp gives a node that runs WARP keys its own Cloudflare identity. Two nodes on one identity take turns losing every packet, so identities are never shared. Until it exists the node is not handed those keys, so they stay down instead of leaving from the node's own address.
+func (a *App) ensureNodeWarp(r *http.Request, nodeID string) {
+	nodeWarpMu.Lock()
+	defer nodeWarpMu.Unlock()
+	need, err := a.Store.NodeNeedsWarp(r.Context(), nodeID)
+	if err != nil || !need {
+		return
+	}
+	if _, err := a.registerWarpFor(r, "node-"+nodeID[:8], &nodeID); err != nil {
+		log.Printf("[WARP] could not register an identity for node %s: %v", nodeID, err)
 	}
 }

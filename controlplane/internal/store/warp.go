@@ -13,6 +13,7 @@ import (
 
 type WarpProfile struct {
 	ID            string
+	NodeID        *string
 	Name          string
 	DeviceID      string
 	PrivateKeyEnc []byte
@@ -29,10 +30,10 @@ var ErrWarpWithCascade = errors.New("key already cascades through a final-exit n
 
 func (s *Store) CreateWarpProfile(ctx context.Context, p WarpProfile) (WarpProfile, error) {
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO warp_profiles (name, device_id, private_key_enc, peer_public_key, endpoint, address_v4, address_v6)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO warp_profiles (name, device_id, private_key_enc, peer_public_key, endpoint, address_v4, address_v6, node_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at
-	`, p.Name, p.DeviceID, p.PrivateKeyEnc, p.PeerPublicKey, p.Endpoint, p.AddressV4, p.AddressV6).Scan(&p.ID, &p.CreatedAt)
+	`, p.Name, p.DeviceID, p.PrivateKeyEnc, p.PeerPublicKey, p.Endpoint, p.AddressV4, p.AddressV6, p.NodeID).Scan(&p.ID, &p.CreatedAt)
 	if err != nil {
 		return WarpProfile{}, fmt.Errorf("create warp profile: %w", err)
 	}
@@ -41,7 +42,7 @@ func (s *Store) CreateWarpProfile(ctx context.Context, p WarpProfile) (WarpProfi
 
 func (s *Store) ListWarpProfiles(ctx context.Context) ([]WarpProfile, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT w.id, w.name, w.device_id, w.peer_public_key, w.endpoint, w.address_v4, w.address_v6, w.created_at,
+		SELECT w.id, w.node_id, w.name, w.device_id, w.peer_public_key, w.endpoint, w.address_v4, w.address_v6, w.created_at,
 		       (SELECT count(*) FROM keys k WHERE k.warp_profile_id = w.id AND k.deleted_at IS NULL)
 		FROM warp_profiles w
 		ORDER BY w.created_at
@@ -53,7 +54,7 @@ func (s *Store) ListWarpProfiles(ctx context.Context) ([]WarpProfile, error) {
 	var out []WarpProfile
 	for rows.Next() {
 		var p WarpProfile
-		if err := rows.Scan(&p.ID, &p.Name, &p.DeviceID, &p.PeerPublicKey, &p.Endpoint, &p.AddressV4, &p.AddressV6, &p.CreatedAt, &p.KeyCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.NodeID, &p.Name, &p.DeviceID, &p.PeerPublicKey, &p.Endpoint, &p.AddressV4, &p.AddressV6, &p.CreatedAt, &p.KeyCount); err != nil {
 			return nil, fmt.Errorf("scan warp profile: %w", err)
 		}
 		out = append(out, p)
@@ -110,4 +111,19 @@ func (s *Store) SetKeyWarp(ctx context.Context, keyID string, profileID *string)
 		return model.Key{}, fmt.Errorf("set key warp: %w", err)
 	}
 	return k, tx.Commit(ctx)
+}
+
+// NodeNeedsWarp reports whether this node runs a key that goes through WARP but has no WARP identity of its own yet.
+func (s *Store) NodeNeedsWarp(ctx context.Context, nodeID string) (bool, error) {
+	var need bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM keys k
+			WHERE k.assigned_node_id = $1 AND k.enabled = true AND k.deleted_at IS NULL AND k.warp_profile_id IS NOT NULL
+		) AND NOT EXISTS (SELECT 1 FROM warp_profiles WHERE node_id = $1)
+	`, nodeID).Scan(&need)
+	if err != nil {
+		return false, fmt.Errorf("check node warp: %w", err)
+	}
+	return need, nil
 }

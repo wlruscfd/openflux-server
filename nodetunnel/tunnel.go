@@ -80,12 +80,9 @@ func WindowBytesFor(transportName string) int {
 	return 0
 }
 
+// Every carrier is an ordered, reliable stream with bursty latency, which RACK misreads as loss.
 func JitterySpuriousLoss(transportName string) bool {
-	switch transportName {
-	case "mts", "boards", "telemost":
-		return true
-	}
-	return false
+	return true
 }
 
 func (t *TCPTunnel) TuneFor(transportName string) {
