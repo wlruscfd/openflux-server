@@ -116,7 +116,12 @@ type Orchestrator struct {
 
 	warpMu sync.Mutex
 	warps  map[string]*warp.Tunnel
+
+	lastPollOK atomic.Int64
 }
+
+// Healthy says whether this process has reached the control plane and fetched its keys at least once.
+func (o *Orchestrator) Healthy() bool { return o.lastPollOK.Load() != 0 }
 
 func NewOrchestrator(cfg Config) *Orchestrator {
 	rangeSize := cfg.PortRangeSize
@@ -322,6 +327,7 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		o.warnThrottled("list-keys", "[NODEAGENT] cannot fetch keys from the controlplane (%s): %v", o.cfg.ControlURL, err)
 		return
 	}
+	o.lastPollOK.Store(time.Now().UnixNano())
 
 	active := make(map[string]RemoteKey, len(keys))
 	for _, k := range keys {

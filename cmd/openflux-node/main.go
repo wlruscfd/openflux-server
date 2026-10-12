@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"github.com/p1neappleXpress/OpenFlux/nodeagent"
+	"github.com/p1neappleXpress/OpenFlux/selfupdate"
 	"github.com/p1neappleXpress/OpenFlux/socks5"
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
@@ -31,6 +32,16 @@ var (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(selfupdate.Version)
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "--write-guard" {
+		if err := selfupdate.WriteGuard(os.Args[2]); err != nil {
+			log.Fatalf("%v", err)
+		}
+		return
+	}
 	fmt.Print("written by p1neappleXpress\n")
 
 	exitNode := flag.Bool("exit-node", false, "Run as exit node (needs root)")
@@ -45,6 +56,8 @@ func main() {
 	localIP := flag.String("local-ip", "", "Raw mode only: exit node egress IP, so the RST-drop iptables rule can be scoped with -s instead of host-wide")
 	portRangeSize := flag.Int("port-range-size", nodeagent.DefaultPortRangeSize, "Managed raw mode only: outbound ports reserved per concurrent key - lower fits more keys on this node, higher tolerates a single key opening more simultaneous connections at once (e.g. Telegram loading media) before new ones start failing")
 	codec := flag.String("codec", "legacy", "Wire codec for --transport volga/oneme/cupsonline/mailru: 'legacy' (default, per-packet LZ4 - unchanged) or 'batched' (coalesce bursts into one zstd-compressed message per transport send; both ends must agree - see README). Ignored for yandex/yandex_multistream, which auto-negotiate their own whole-batch zstd format with the peer - see README.")
+	autoUpdate := flag.Bool("auto-update", os.Getenv("NODEAGENT_AUTOUPDATE") != "0", "Managed mode: replace this binary with a newer signed release and roll back if the new one does not become healthy (needs openflux-guard.sh next to the binary)")
+	updateURL := flag.String("update-url", os.Getenv("NODEAGENT_UPDATE_URL"), "Managed mode: signed update index to follow (default: the project release)")
 	captchaSolveMode := flag.String("captcha-solve-mode", "off", "yandex/yandex_multistream only: 'off' waits for cookies/cooldown, 'native' enables the experimental PoW solver (see README)")
 	flag.StringVar(&globalDocUrl, "url", "http://#", "Document URL. If u use Yandex.Docs transport")
 	docUrls := flag.String("urls", "", "Comma-separated doc URLs for --transport yandex_multistream (2+ required, same list on both ends)")
@@ -93,6 +106,12 @@ func main() {
 		cfg.PortRangeSize = *portRangeSize
 		cfg.CaptchaSolveMode = parseCaptchaSolveMode(*captchaSolveMode)
 		orch := nodeagent.NewOrchestrator(cfg)
+		if *autoUpdate {
+			if exe, err := os.Executable(); err == nil {
+				up := selfupdate.New(selfupdate.Config{IndexURL: *updateURL, Exe: exe, Healthy: orch.Healthy})
+				go up.Run(ctx)
+			}
+		}
 		orch.Run(ctx)
 		return
 	}

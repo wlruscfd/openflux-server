@@ -72,3 +72,4 @@ phpbox_bundle/
 /probe_*.php
 /stress-out/
 /stresstest/
+dist-node/
