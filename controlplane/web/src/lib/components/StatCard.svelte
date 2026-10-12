@@ -23,14 +23,14 @@
 <div class="of-card px-4 py-4 sm:px-5 sm:py-5">
 	<div class="flex items-center justify-between gap-2">
 		<div class="min-w-0">
-			<p class="truncate text-[10.5px] font-semibold tracking-wide text-[var(--of-muted)] uppercase">{label}</p>
-			<p class="mt-2 truncate text-[1.7rem] leading-none font-semibold tracking-tight text-[var(--of-ink)] tabular-nums">{value}</p>
+			<p class="text-[10.5px] leading-tight font-semibold tracking-wide text-[var(--of-muted)] uppercase">{label}</p>
+			<p class="mt-2 text-2xl leading-none font-semibold tracking-tight break-words text-[var(--of-ink)] tabular-nums sm:text-[1.7rem]">{value}</p>
 			{#if sub}
-				<p class="mt-1.5 line-clamp-2 text-xs leading-snug text-[var(--of-muted)]">{sub}</p>
+				<p class="mt-1.5 text-xs leading-snug text-[var(--of-muted)]">{sub}</p>
 			{/if}
 		</div>
 		{#if icon}
-			<span class="shrink-0 self-start rounded-xl border border-[var(--of-line)] bg-[var(--of-raise)] p-2.5 {accents[tone]}">{@render icon()}</span>
+			<span class="hidden shrink-0 self-start rounded-xl border border-[var(--of-line)] bg-[var(--of-raise)] p-2.5 sm:block {accents[tone]}">{@render icon()}</span>
 		{/if}
 	</div>
 </div>
