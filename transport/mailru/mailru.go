@@ -96,6 +96,20 @@ type MailruDocsInfo struct {
 }
 
 // One shared transport: a fresh one per call kept an idle connection open for every fetch of every key.
+// errNotJSON: the API address answered with something that is not the editor config, typically a block or challenge page.
+var errNotJSON = errors.New("API did not return JSON")
+
+var whitespaceRun = regexp.MustCompile(`\s+`)
+
+// snippet is the start of a page body, collapsed to one short line for the log.
+func snippet(b []byte) string {
+	text := whitespaceRun.ReplaceAllString(string(b), " ")
+	if len(text) > 200 {
+		text = text[:200]
+	}
+	return text
+}
+
 var mailruHTTP = sync.OnceValue(transport.ProtectedHTTPTransport)
 
 type DocSession struct {
@@ -314,7 +328,11 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			if utils.Throttled("m-docs.fetch", time.Minute) {
 				utils.Infof("[M-DOCS] cannot open the document: %v; retrying", err)
 			}
-			t.scheduleReconnect(attempt, "fetch_failed", err)
+			if errors.Is(err, errNotJSON) {
+				t.scheduleReconnectSlow(attempt, "fetch_failed", err)
+			} else {
+				t.scheduleReconnect(attempt, "fetch_failed", err)
+			}
 			return
 		}
 
@@ -643,6 +661,15 @@ func CursorPayloads(text string) []string {
 }
 
 func (t *MailruDocsTransport) scheduleReconnect(attempt int, reasonCode string, cause error) {
+	t.scheduleReconnectIn(attempt, reasonCode, cause, reconnectBackoff)
+}
+
+// scheduleReconnectSlow is for an edge that answers a page instead of the API: asking again every few seconds only keeps the address on its blocklist.
+func (t *MailruDocsTransport) scheduleReconnectSlow(attempt int, reasonCode string, cause error) {
+	t.scheduleReconnectIn(attempt, reasonCode, cause, slowBackoff)
+}
+
+func (t *MailruDocsTransport) scheduleReconnectIn(attempt int, reasonCode string, cause error, backoff func(int) time.Duration) {
 	next := attempt + 1
 	if !t.IsRunning() || next >= t.GetConfig().MaxReconnectAttempts {
 		return
@@ -651,7 +678,7 @@ func (t *MailruDocsTransport) scheduleReconnect(attempt int, reasonCode string, 
 	if !t.reconnecting.CompareAndSwap(false, true) {
 		return // one is already waiting
 	}
-	d := reconnectBackoff(next)
+	d := backoff(next)
 	causeText := strings.ReplaceAll(cause.Error(), "\n", " ")
 	t.EmitEvent(transport.EventRetrying, fmt.Sprintf("%d|%d|%s|%s", next+1, int(d.Seconds()), reasonCode, causeText))
 	utils.Debugf("[M-DOCS] reconnecting in %v (attempt %d)", d, next)
@@ -663,6 +690,22 @@ func (t *MailruDocsTransport) scheduleReconnect(attempt int, reasonCode string, 
 
 	t.RecordReconnect()
 	t.connectToDoc(next)
+}
+
+// slowBackoff: 30 s doubling up to 5 min, with jitter.
+func slowBackoff(n int) time.Duration {
+	shift := n - 1
+	if shift < 0 {
+		shift = 0
+	}
+	if shift > 4 {
+		shift = 4
+	}
+	d := 30 * time.Second * time.Duration(1<<uint(shift))
+	if d > 5*time.Minute {
+		d = 5 * time.Minute
+	}
+	return d + time.Duration(rand.Int63n(int64(d/4)+1))
 }
 
 // reconnectBackoff returns an exponential backoff with jitter, capped at 15s.
@@ -721,15 +764,14 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return MailruDocsInfo{}, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
 	var res map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &res); err != nil {
-		return MailruDocsInfo{}, fmt.Errorf("failed to parse JSON: %w", err)
+		return MailruDocsInfo{}, fmt.Errorf("%w: status %d, %s, %q", errNotJSON, resp.StatusCode, resp.Header.Get("Content-Type"), snippet(bodyBytes))
 	}
 
 	apiBase, _ := res["api"].(string)
