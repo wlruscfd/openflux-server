@@ -378,7 +378,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapBatched(cupsonline.NewCupsonlineTransport(cfg.DocURL, transportConfig, true), cfg), nil
+		return withOverlay(cfg, "cupsonline", func() transport.Transport {
+			return cupsonline.NewCupsonlineTransport(cfg.DocURL, transportConfig, true)
+		}, func(inner transport.Transport) transport.Transport { return wrapBatched(inner, cfg) }), nil
 	case "telemost":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")

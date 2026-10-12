@@ -23,6 +23,9 @@ const (
 	overlayMaxFails   = 2
 )
 
+// dynamicIDs are the transports this core can run from a package; the catalog may list more for newer apps.
+var dynamicIDs = map[string]bool{"mailru": true, "cupsonline": true}
+
 type catalogEntry struct {
 	ID     string `json:"id"`
 	Name   string `json:"name,omitempty"`
@@ -114,7 +117,7 @@ func TransportsUpdate(dir, catalogURL, channel string) string {
 
 	out := []TransportUpdate{}
 	for _, e := range cat.Transports {
-		if e.ID == "" || strings.ContainsAny(e.ID, `/\.`) || !script.SecureURL(e.Update) {
+		if !dynamicIDs[e.ID] || !script.SecureURL(e.Update) {
 			continue
 		}
 		cur, have := installedVersion(dir, e.ID)
