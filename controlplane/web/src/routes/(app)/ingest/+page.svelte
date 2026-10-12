@@ -119,7 +119,7 @@
 
 	<Card title={t('ingest.title')}>
 		<div class="overflow-x-auto">
-			<table class="of-table">
+			<table class="of-table of-stack">
 				<thead>
 					<tr>
 						<th>{t('ingest.colLabel')}</th>
@@ -133,23 +133,23 @@
 				<tbody>
 					{#each tokens as token (token.ID)}
 						<tr>
-							<td>
+							<td class="of-title">
 								<div class="flex items-center gap-2">
 									<PlugZap class="h-4 w-4 shrink-0 text-[var(--of-muted)]" />
 									<span class="font-medium text-[var(--of-ink)]">{token.Label}</span>
 								</div>
 							</td>
-							<td class="font-mono text-xs text-[var(--of-muted)]" title={token.ID}>{shortId(token.ID)}</td>
-							<td>
+							<td class="font-mono text-xs text-[var(--of-muted)]" title={token.ID} data-label={t('ingest.colId')}>{shortId(token.ID)}</td>
+							<td data-label={t('ingest.colStatus')}>
 								{#if token.Enabled}
 									<Badge tone="ok" dot>{t('generic.enabled')}</Badge>
 								{:else}
 									<Badge tone="muted" dot>{t('generic.disabled')}</Badge>
 								{/if}
 							</td>
-							<td class="font-mono text-xs text-[var(--of-muted)]">{token.Scope}</td>
-							<td class="text-xs text-[var(--of-muted)]">{formatDate(token.CreatedAt, i18n.lang)}</td>
-							<td>
+							<td class="font-mono text-xs text-[var(--of-muted)]" data-label={t('ingest.colScope')}>{token.Scope}</td>
+							<td class="text-xs text-[var(--of-muted)]" data-label={t('ingest.colCreated')}>{formatDate(token.CreatedAt, i18n.lang)}</td>
+							<td class="of-actions">
 								{#if token.Enabled}
 									<button type="button" class="of-iconbtn" title={t('generic.disabled')} disabled={busyKey === token.ID} onclick={() => toggle(token)}>
 										<ToggleLeft class="h-4 w-4" />

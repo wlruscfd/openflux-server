@@ -59,6 +59,7 @@
 	let e2eEncryption = $state(false);
 	let limitGb = $state('');
 	let creating = $state(false);
+	let createOpen = $state(false);
 	const isMultistream = $derived(transport === 'yandex_multistream');
 	const transportNeedsDocUrl = $derived(transport !== 'cupsonline');
 
@@ -441,6 +442,13 @@
 
 	<!-- Create -->
 	<Card title={t('keys.createTitle')}>
+		{#snippet actions()}
+			<Button size="sm" variant={createOpen ? 'secondary' : 'primary'} onclick={() => (createOpen = !createOpen)}>
+				<Plus class="h-4 w-4" />
+				{createOpen ? t('generic.cancel') : t('keys.create')}
+			</Button>
+		{/snippet}
+		{#if createOpen}
 		<form
 			class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
 			onsubmit={(e) => {
@@ -491,6 +499,9 @@
 				</Button>
 			</div>
 		</form>
+		{:else if !result}
+			<p class="text-xs text-[var(--of-muted)]">{t('keys.createCollapsed')}</p>
+		{/if}
 
 		{#if createError}
 			<p class="mt-3 flex items-center gap-1.5 text-sm text-[var(--of-danger)]">
@@ -534,7 +545,7 @@
 		</div>
 
 		<div class="overflow-x-auto">
-			<table class="of-table">
+			<table class="of-table of-stack">
 				<thead>
 					<tr>
 						<th>{t('keys.colLabel')}</th>
@@ -551,26 +562,28 @@
 					{#each filtered as k (k.ID)}
 						{@const status = keyStatus(k)}
 						<tr>
-							<td>
+							<td class="of-title">
 								<span class="font-medium text-[var(--of-ink)]">{k.Label || '—'}</span>
 							</td>
-							<td class="font-mono text-xs text-[var(--of-muted)]" title={k.ID}>{shortId(k.ID)}</td>
-							<td>
+							<td class="font-mono text-xs text-[var(--of-muted)]" title={k.ID} data-label={t('keys.colId')}>{shortId(k.ID)}</td>
+							<td data-label={t('keys.colTransport')}>
 								<span class="text-xs text-[var(--of-muted)]">{k.Transport}</span>
 							</td>
-							<td>
+							<td data-label={t('keys.colStatus')}>
 								<Badge tone={statusTone[status]} dot>{t(statusLabel[status])}</Badge>
 							</td>
-							<td class="num tabular-nums text-[var(--of-ink)]">
-								{formatBytes(bytesUsed(k), i18n.lang)}
-								{#if k.TrafficLimitBytes != null}
-									<span class="text-[var(--of-muted)]"> / {formatBytes(k.TrafficLimitBytes, i18n.lang)}</span>
-								{/if}
+							<td class="num tabular-nums text-[var(--of-ink)]" data-label={t('keys.colTraffic')}>
+								<span class="whitespace-nowrap">
+									{formatBytes(bytesUsed(k), i18n.lang)}
+									{#if k.TrafficLimitBytes != null}
+										<span class="text-[var(--of-muted)]"> / {formatBytes(k.TrafficLimitBytes, i18n.lang)}</span>
+									{/if}
+								</span>
 							</td>
-							<td class="text-xs text-[var(--of-muted)]">{k.OwnerRef || '—'}</td>
-							<td class="text-xs text-[var(--of-muted)]">{formatDate(k.LastSeenAt, i18n.lang)}</td>
-							<td>
-								<div class="flex items-center gap-1">
+							<td class="text-xs text-[var(--of-muted)]" data-label={t('keys.colOwner')}>{k.OwnerRef || '—'}</td>
+							<td class="text-xs whitespace-nowrap text-[var(--of-muted)]" data-label={t('keys.colLastSeen')}>{formatDate(k.LastSeenAt, i18n.lang)}</td>
+							<td class="of-actions">
+								<div class="flex flex-wrap items-center gap-1 sm:flex-nowrap">
 									{#if k.Enabled}
 										<button
 											type="button"

@@ -81,7 +81,7 @@
 	</div>
 
 	<!-- Stat cards -->
-	<div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
+	<div class="grid grid-cols-2 gap-3 lg:grid-cols-5 [&>*:last-child:nth-child(odd)]:col-span-2 lg:[&>*:last-child:nth-child(odd)]:col-span-1">
 		<StatCard
 			label={t('dash.totalTraffic')}
 			value={formatBytes(totalTraffic, i18n.lang)}
@@ -153,7 +153,7 @@
 	<!-- Nodes -->
 	<Card title={t('dash.nodesTitle')}>
 		<div class="overflow-x-auto">
-			<table class="of-table">
+			<table class="of-table of-stack">
 				<thead>
 					<tr>
 						<th>{t('nodes.colName')}</th>
@@ -167,23 +167,23 @@
 						{@const since = node.LastHeartbeatAt ? timeAgoMs(node.LastHeartbeatAt) : null}
 						{@const online = since !== null && since <= ONLINE_WINDOW_MS}
 						<tr>
-							<td>
+							<td class="of-title">
 								<div class="flex items-center gap-2">
 									<Users class="h-4 w-4 shrink-0 text-[var(--of-muted)]" />
 									<span class="font-medium text-[var(--of-ink)]">{node.Name}</span>
 								</div>
 							</td>
-							<td>
+							<td data-label={t('nodes.colStatus')}>
 								{#if online}
 									<Badge tone="ok" dot>{t('generic.online')}</Badge>
 								{:else}
 									<Badge tone="muted" dot>{t('generic.offline')}</Badge>
 								{/if}
 							</td>
-							<td class="num tabular-nums text-[var(--of-ink)]">
+							<td class="num tabular-nums text-[var(--of-ink)]" data-label={t('nodes.colKeys')}>
 								{node.ActiveKeys}{node.MaxKeys > 0 ? ` / ${node.MaxKeys}` : ''}
 							</td>
-							<td class="text-[var(--of-muted)]">{formatDate(node.LastHeartbeatAt, i18n.lang)}</td>
+							<td class="text-[var(--of-muted)]" data-label={t('nodes.colHeartbeat')}>{formatDate(node.LastHeartbeatAt, i18n.lang)}</td>
 						</tr>
 					{:else}
 						<tr>

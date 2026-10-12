@@ -34,7 +34,7 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		role="presentation"
-		class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:items-center"
+		class="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 backdrop-blur-sm sm:items-center sm:p-4"
 		onclick={(e) => {
 			if (e.target === e.currentTarget) onClose?.();
 		}}
@@ -42,7 +42,7 @@
 		<div
 			role="dialog"
 			aria-modal="true"
-			class="my-auto w-full rounded-xl border border-[var(--of-line)] bg-[var(--of-panel)] shadow-2xl {wide
+			class="max-h-[92vh] sm:my-auto w-full overflow-y-auto rounded-t-2xl border border-[var(--of-line)] bg-[var(--of-panel)] shadow-2xl sm:rounded-xl {wide
 				? 'max-w-2xl'
 				: 'max-w-md'}"
 		>
@@ -68,7 +68,7 @@
 			<div class="px-5 py-4">{@render children()}</div>
 
 			{#if footer}
-				<footer class="flex flex-wrap justify-end gap-2 border-t border-[var(--of-line)] px-5 py-4">
+				<footer class="flex flex-wrap justify-end gap-2 border-t border-[var(--of-line)] px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
 					{@render footer()}
 				</footer>
 			{/if}

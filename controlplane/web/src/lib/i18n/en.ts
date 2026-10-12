@@ -161,6 +161,7 @@ export const en: Dict = {
 	'keys.cascade': 'Cascade final exit',
 	'keys.cascadeDirect': 'Direct (no cascade)',
 	'keys.cascadeUpdated': 'Cascade updated',
+	'keys.createCollapsed': 'Pick a transport, paste its link and set an optional traffic limit to hand out a new key.',
 	'keys.cascadeWarp': 'Cloudflare WARP (account is created automatically)',
 	"keys.cascadeWarpHint": "The exit node will reach the internet through Cloudflare WARP, so sites see a WARP address instead of the node's own. The panel registers a WARP account itself the first time and reuses it for every key.",
 	'keys.cascadeWarpFailed': 'The panel could not register a WARP account with Cloudflare - check that this server can reach api.cloudflareclient.com.',

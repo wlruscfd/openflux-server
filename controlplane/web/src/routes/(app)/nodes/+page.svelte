@@ -152,7 +152,7 @@
 
 	<Card title={t('nodes.title')}>
 		<div class="overflow-x-auto">
-			<table class="of-table">
+			<table class="of-table of-stack">
 				<thead>
 					<tr>
 						<th>{t('nodes.colName')}</th>
@@ -170,27 +170,27 @@
 						{@const since = node.LastHeartbeatAt ? timeAgoMs(node.LastHeartbeatAt) : null}
 						{@const online = since !== null && since <= ONLINE_WINDOW_MS}
 						<tr>
-							<td>
+							<td class="of-title">
 								<div class="flex items-center gap-2">
 									<Server class="h-4 w-4 shrink-0 text-[var(--of-muted)]" />
 									<span class="font-medium text-[var(--of-ink)]">{node.Name}</span>
 								</div>
 							</td>
-							<td class="font-mono text-xs text-[var(--of-muted)]" title={node.ID}>{shortId(node.ID)}</td>
-							<td>
+							<td class="font-mono text-xs text-[var(--of-muted)]" title={node.ID} data-label={t('nodes.colId')}>{shortId(node.ID)}</td>
+							<td data-label={t('nodes.colStatus')}>
 								{#if online}
 									<Badge tone="ok" dot>{t('generic.online')}</Badge>
 								{:else}
 									<Badge tone="muted" dot>{t('generic.offline')}</Badge>
 								{/if}
 							</td>
-							<td class="num tabular-nums text-[var(--of-ink)]">
+							<td class="num tabular-nums text-[var(--of-ink)]" data-label={t('nodes.colKeys')}>
 								{node.ActiveKeys}{node.MaxKeys > 0 ? ` / ${node.MaxKeys}` : ''}
 							</td>
-							<td class="text-xs text-[var(--of-muted)]">{formatDate(node.LastHeartbeatAt, i18n.lang)}</td>
-							<td class="text-xs text-[var(--of-muted)]">{formatDate(node.CreatedAt, i18n.lang)}</td>
-							<td>
-								<div class="flex items-center gap-1.5">
+							<td class="text-xs text-[var(--of-muted)]" data-label={t('nodes.colHeartbeat')}>{formatDate(node.LastHeartbeatAt, i18n.lang)}</td>
+							<td class="text-xs text-[var(--of-muted)]" data-label={t('nodes.colCreated')}>{formatDate(node.CreatedAt, i18n.lang)}</td>
+							<td data-label={t('nodes.colPublicAddress')}>
+								<div class="flex w-full items-center gap-1.5 sm:w-auto">
 									<input
 										class="input h-8 text-xs"
 										placeholder={t('nodes.publicAddressPh')}
@@ -201,7 +201,7 @@
 									/>
 								</div>
 							</td>
-							<td>
+							<td class="of-actions">
 								<button
 									type="button"
 									class="of-iconbtn"

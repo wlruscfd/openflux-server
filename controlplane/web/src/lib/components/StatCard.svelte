@@ -26,11 +26,11 @@
 			<p class="text-xs font-medium text-[var(--of-muted)]">{label}</p>
 			<p class="mt-1 truncate text-2xl leading-none font-semibold text-[var(--of-ink)] tabular-nums">{value}</p>
 			{#if sub}
-				<p class="mt-1.5 truncate text-xs text-[var(--of-muted)]">{sub}</p>
+				<p class="mt-1.5 line-clamp-2 text-xs leading-snug text-[var(--of-muted)]">{sub}</p>
 			{/if}
 		</div>
 		{#if icon}
-			<span class="shrink-0 pb-3 {accents[tone]}">{@render icon()}</span>
+			<span class="shrink-0 self-start rounded-lg bg-[var(--of-raise)] p-2 {accents[tone]}">{@render icon()}</span>
 		{/if}
 	</div>
 </div>

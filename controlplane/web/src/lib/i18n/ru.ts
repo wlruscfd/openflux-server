@@ -159,6 +159,7 @@ export const ru = {
 	'keys.cascade': 'Каскад — финальный выход',
 	'keys.cascadeDirect': 'Напрямую (без каскада)',
 	'keys.cascadeUpdated': 'Каскад обновлён',
+	'keys.createCollapsed': 'Выбери транспорт, вставь ссылку и при желании задай лимит трафика, чтобы выдать новый ключ.',
 	'keys.cascadeWarp': 'Cloudflare WARP (аккаунт создаётся автоматически)',
 	'keys.cascadeWarpHint': 'Выходная нода будет ходить в интернет через Cloudflare WARP: сайты увидят адрес WARP, а не адрес ноды. Панель сама регистрирует WARP-аккаунт при первом включении и использует его для всех ключей.',
 	'keys.cascadeWarpFailed': 'Панель не смогла зарегистрировать WARP-аккаунт в Cloudflare — проверь, что сервер панели достаёт до api.cloudflareclient.com.',

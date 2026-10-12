@@ -14,84 +14,100 @@
 		height?: number;
 	}
 
-	let { data, lang = 'ru', height = 190 }: Props = $props();
+	let { data, lang = 'ru', height = 210 }: Props = $props();
 
-	const W = 800;
-	const H = $derived(height);
-	const PLOT_TOP = 14;
-	const PLOT_BOTTOM = $derived(H - 30);
-	const PLOT_HEIGHT = $derived(PLOT_BOTTOM - PLOT_TOP);
+	const PAD_L = 52;
+	const PAD_R = 6;
+	const PAD_T = 10;
+	const PAD_B = 24;
 
-	const totals = $derived(data.map((d) => d.sent + d.recv));
-	const max = $derived(Math.max(...totals, 1));
+	let width = $state(0);
+	let hover = $state<number | null>(null);
 
-	const frames = $derived(
-		[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000]
-			.find((f) => max / f <= 5) ?? 1_000_000
-	);
-	const ySteps = $derived(
-		((): number[] => {
-			const f = frames;
-			const raw = [];
-			let v = f;
-			while (v < max * 1.1) {
-				raw.push(v);
-				v += f;
-			}
-			raw.push(f * Math.ceil((max * 1.1) / f));
-			return raw;
+	const innerW = $derived(Math.max(0, width - PAD_L - PAD_R));
+	const innerH = $derived(height - PAD_T - PAD_B);
+	const max = $derived(Math.max(...data.map((d) => d.sent + d.recv), 1));
+
+	const niceMax = $derived(
+		((): number => {
+			const exp = Math.pow(1024, Math.floor(Math.log(max) / Math.log(1024)));
+			const steps = [1, 2, 4, 5, 8, 10, 16, 20, 32, 40, 50, 64, 80, 100, 128, 200, 256, 400, 500, 512, 800, 1000, 1024];
+			const n = max / exp;
+			return (steps.find((s) => s >= n) ?? Math.ceil(n)) * exp;
 		})()
 	);
+	const ticks = $derived([0, 0.25, 0.5, 0.75, 1].map((f) => f * niceMax));
 
-	function yFor(value: number): number {
-		return PLOT_BOTTOM - (value / (max * 1.1)) * PLOT_HEIGHT;
+	function y(value: number): number {
+		return PAD_T + innerH - (value / niceMax) * innerH;
 	}
 
-	const slot = $derived(data.length > 0 ? W / data.length : 1);
-	const barW = $derived(Math.max(2, slot * 0.62));
-	const labelEvery = $derived(Math.max(1, Math.ceil(data.length / 14)));
+	const slot = $derived(data.length > 0 ? innerW / data.length : 1);
+	const barW = $derived(Math.max(2, Math.min(26, slot * 0.68)));
+	const labelEvery = $derived(Math.max(1, Math.ceil(data.length / Math.max(2, Math.floor(innerW / 54)))));
+
+	function onMove(e: MouseEvent | PointerEvent) {
+		const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
+		const i = Math.floor((e.clientX - rect.left - PAD_L) / slot);
+		hover = i >= 0 && i < data.length ? i : null;
+	}
+
+	const tip = $derived(hover !== null ? data[hover] : null);
+	const tipLeft = $derived(hover !== null ? PAD_L + hover * slot + slot / 2 : 0);
 </script>
 
-<div class="w-full" style="height: {height}px">
-	<svg viewBox="0 0 {W} {H}" class="h-full w-full" preserveAspectRatio="none">
-		{#if data.length === 0}
-			<text
-				x="50%"
-				y="50%"
-				text-anchor="middle"
-				fill="var(--of-muted)"
-				font-size="13"
-			>{t('generic.loading')}</text>
+<div class="w-full">
+	<div class="mb-2 flex items-center gap-4 text-xs text-[var(--of-muted)]">
+		<span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-[var(--of-accent)]"></span>{t('dash.down')}</span>
+		<span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-[var(--of-warn)]"></span>{t('dash.up')}</span>
+	</div>
+
+	<div class="relative w-full" style="height: {height}px" bind:clientWidth={width}>
+		{#if data.length === 0 || width === 0}
+			<p class="flex h-full items-center justify-center text-sm text-[var(--of-muted)]">{t('generic.loading')}</p>
 		{:else}
-			<g stroke="var(--of-line)" stroke-width="1">
-				{#each ySteps as step (step)}
-					<line x1="0" x2="{W}" y1="{yFor(step)}" y2="{yFor(step)}" />
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<svg
+				width={width}
+				height={height}
+				class="block touch-pan-y select-none"
+				onpointermove={onMove}
+				onpointerleave={() => (hover = null)}
+			>
+				{#each ticks as tick (tick)}
+					<line x1={PAD_L} x2={width - PAD_R} y1={y(tick)} y2={y(tick)} stroke="var(--of-line)" stroke-width="1" stroke-dasharray={tick === 0 ? undefined : '3 4'} />
+					<text x={PAD_L - 8} y={y(tick) + 3.5} text-anchor="end" fill="var(--of-muted)" font-size="10.5" class="tabular-nums">{tick === 0 ? '0' : formatBytes(tick, lang)}</text>
 				{/each}
-			</g>
-			<g class="tabular-nums" fill="var(--of-muted)" font-size="10">
-				{#each ySteps as step (step)}
-					<text x="4" y="{yFor(step) - 3}">{formatBytes(step, lang)}</text>
-				{/each}
-			</g>
-			<g>
+
 				{#each data as d, i (d.day)}
-					{@const x = i * slot + (slot - barW) / 2}
-					{@const yRecv = yFor(d.recv)}
-					{@const ySent = yFor(d.sent + d.recv)}
-					<g>
-						<title>{formatDateShort(d.day, lang)}: {formatBytes(d.sent + d.recv, lang)} ({t('dash.sent')}: {formatBytes(d.sent, lang)})</title>
-						<rect x="{x}" y="{yRecv}" width="{barW}" height="{Math.max(0, PLOT_BOTTOM - yRecv)}" rx="2" fill="var(--of-accent)" />
-						<rect x="{x}" y="{ySent}" width="{barW}" height="{Math.max(0, PLOT_BOTTOM - ySent)}" fill="var(--of-warn)" />
+					{@const x = PAD_L + i * slot + (slot - barW) / 2}
+					{@const yRecv = y(d.recv)}
+					{@const yTotal = y(d.sent + d.recv)}
+					<g opacity={hover === null || hover === i ? 1 : 0.55}>
+						<rect {x} y={yRecv} width={barW} height={Math.max(0, y(0) - yRecv)} fill="var(--of-accent)" />
+						<rect {x} y={yTotal} width={barW} height={Math.max(0, yRecv - yTotal)} rx="2" fill="var(--of-warn)" />
 					</g>
 				{/each}
-			</g>
-			<g fill="var(--of-muted)" font-size="10" text-anchor="middle">
+
 				{#each data as d, i (d.day)}
 					{#if i % labelEvery === 0}
-						<text x="{i * slot + slot / 2}" y="{H - 10}">{d.day.slice(5)}</text>
+						<text x={PAD_L + i * slot + slot / 2} y={height - 7} text-anchor="middle" fill="var(--of-muted)" font-size="10.5">{d.day.slice(5)}</text>
 					{/if}
 				{/each}
-			</g>
+			</svg>
+
+			{#if tip}
+				<div
+					class="pointer-events-none absolute top-0 z-10 rounded-lg border border-[var(--of-line-strong)] bg-[var(--of-panel)] px-2.5 py-1.5 text-xs shadow-lg"
+					style="left: {Math.min(Math.max(tipLeft, 70), width - 70)}px; transform: translateX(-50%)"
+				>
+					<p class="font-medium text-[var(--of-ink)]">{formatDateShort(tip.day, lang)}</p>
+					<p class="tabular-nums text-[var(--of-muted)]">
+						<span class="text-[var(--of-accent)]">↓ {formatBytes(tip.recv, lang)}</span> ·
+						<span class="text-[var(--of-warn)]">↑ {formatBytes(tip.sent, lang)}</span>
+					</p>
+				</div>
+			{/if}
 		{/if}
-	</svg>
+	</div>
 </div>
