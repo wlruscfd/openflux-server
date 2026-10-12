@@ -67,3 +67,14 @@ func TestSecondReconnectWhileOneIsWaitingReturnsAtOnce(t *testing.T) {
 		t.Fatal("a second scheduled reconnect waited out its own backoff instead of yielding")
 	}
 }
+
+func TestCursorMessageCarriesTheRealLength(t *testing.T) {
+	msg := cursorMessage([]byte("hello"))
+	if want := `42["message",{"type":"cursor","cursor":"5;aGVsbG8="}]`; msg != want {
+		t.Fatalf("got %s, want %s", msg, want)
+	}
+	ka := cursorMessage([]byte(keepAliveRaw))
+	if got := CursorPayloads(ka); len(got) != 0 {
+		t.Fatalf("a keepalive must not be taken for data: %v", got)
+	}
+}
