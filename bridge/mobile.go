@@ -55,6 +55,7 @@ type Config struct {
 	// ScriptsDir holds the dynamic transport packages; empty means the built-in transports only.
 	ScriptsDir string `json:"scripts_dir,omitempty"`
 	AvitoCookies string `json:"avito_cookies,omitempty"`
+	ScriptID string `json:"script_id,omitempty"`
 
 	E2EEncryption bool `json:"e2e_encryption,omitempty"`
 
@@ -383,6 +384,12 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		return withOverlay(cfg, "cupsonline", func() transport.Transport {
 			return cupsonline.NewCupsonlineTransport(cfg.DocURL, transportConfig, true)
 		}, func(inner transport.Transport) transport.Transport { return wrapBatched(inner, cfg) }), nil
+	case "script":
+		st, err := openPackage(cfg, cfg.ScriptID)
+		if err != nil {
+			return nil, err
+		}
+		return wrapGeneric(st, cfg), nil
 	case "avito":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
