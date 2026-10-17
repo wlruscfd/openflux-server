@@ -38,6 +38,7 @@ export interface KeyDTO {
 	FinalExitNodeID: string | null;
 	RelayPort: number | null;
 	WarpProfileID: string | null;
+	HasCookies: boolean;
 }
 
 export type KeyStatus = 'active' | 'disabled' | 'over_quota' | 'expired';
@@ -231,7 +232,11 @@ export const api = {
 		e2e_encryption?: boolean;
 		traffic_limit_bytes?: number;
 		owner_ref?: string;
+		avito_cookies?: string;
 	}) => request<CreateKeyResult>('POST', '/v1/admin/keys', body),
+	setKeyCookies: (id: string, cookies: string) =>
+		request<{ status: string }>('PUT', `/v1/admin/keys/${id}/cookies`, { cookies }),
+	clearKeyCookies: (id: string) => request<null>('DELETE', `/v1/admin/keys/${id}/cookies`),
 	getKey: (id: string) => request<KeyDTO>('GET', `/v1/admin/keys/${id}`),
 	setKeyEnabled: (id: string, enabled: boolean) =>
 		request('POST', `/v1/admin/keys/${id}/${enabled ? 'enable' : 'disable'}`),

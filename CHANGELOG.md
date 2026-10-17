@@ -11,6 +11,12 @@ All notable changes to the OpenFlux core. Format loosely follows
   connects paced per host (`OPENFLUX_HOST_RATE`, e.g. `code.avito.ru=4,cloud.mail.ru=0.2` per second), WebSocket pings so an idle room
   does not reconnect every 90 s, jittered reconnects that return to the minimum delay after a healthy spell, 32 KB socket buffers
   instead of 256 KB, rejected cookies fail the key at once, and fewer rooms per key as the node serves more avito keys.
+- **Outbound proxy keys (sing-box).** The panel keeps subscription links per carrier and a node balances the carrier's connections
+  across them (needs a `sing-box` binary on the node, `OPENFLUX_SINGBOX` to point at it). Room creation for cups.online and avito
+  spreads over different keys, and a 403/429 benches the key it came through so the retry uses another one.
+- **Avito keys in the panel.** Creating a key of type `avito` takes the cookies of an Avito account (Cookie header, cookies.txt or a
+  JSON export, with instructions in the panel); they are stored encrypted, only reach the node that runs the key and can be replaced
+  from the edit dialog without restarting the key.
 - **Per-host request pacing.** Mail.ru API calls go through the same gate (0.2 per second by default), so a node starting dozens of
   keys no longer hits the document server with a burst.
 

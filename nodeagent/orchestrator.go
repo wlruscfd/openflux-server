@@ -328,6 +328,21 @@ func cookieFingerprint(jar string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+func (o *Orchestrator) avitoCookiesFor(keyID string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	jars, err := o.client.ListKeyCookies(ctx)
+	if err != nil {
+		utils.Debugf("[NODEAGENT] key %s: cookies lookup failed: %v", keyID, err)
+	}
+	for _, j := range jars {
+		if j.KeyID == keyID && j.Cookies != "" {
+			return j.Cookies
+		}
+	}
+	return o.cfg.AvitoCookies
+}
+
 func (o *Orchestrator) publishRoomLists(trans transport.Transport, k RemoteKey) {
 	rl, ok := trans.(interface {
 		OnRoomList(func(string))
@@ -661,7 +676,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			}
 			return nil, fmt.Errorf("key %s: avito transport doesn't support e2e_encryption yet", k.ID)
 		}
-		trans = transport.NewStripedRoom(avito.NewAvitoTransport(k.DocURL, transport.DefaultConfig(), o.cfg.AvitoCookies, false))
+		trans = transport.NewStripedRoom(avito.NewAvitoTransport(k.DocURL, transport.DefaultConfig(), o.avitoCookiesFor(k.ID), false))
 		o.publishRoomLists(trans, k)
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))

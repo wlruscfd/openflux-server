@@ -22,6 +22,12 @@ func (s *StripedRoom) OnRoomList(f func(string)) {
 	}
 }
 
+func (s *StripedRoom) ProvideCookies(raw string) {
+	if p, ok := s.inner.(interface{ ProvideCookies(string) }); ok {
+		p.ProvideCookies(raw)
+	}
+}
+
 func (s *StripedRoom) FetchCookies() (map[string]string, error) {
 	if ce, ok := s.inner.(CookieExchanger); ok {
 		return ce.FetchCookies()

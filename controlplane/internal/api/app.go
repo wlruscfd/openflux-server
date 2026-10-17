@@ -89,6 +89,8 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("DELETE /v1/keys/cookies", a.withRateLimit(a.handlePostKeyCookies))
 	mux.HandleFunc("GET /v1/nodes/cookies", a.withNodeToken(a.handleNodeListCookies))
 	mux.HandleFunc("GET /v1/admin/keys/{id}/cookies/status", a.withAdmin(a.handleKeyCookieStatus))
+	mux.HandleFunc("PUT /v1/admin/keys/{id}/cookies", a.withAdmin(a.handleAdminSetKeyCookies))
+	mux.HandleFunc("DELETE /v1/admin/keys/{id}/cookies", a.withAdmin(a.handleAdminDeleteKeyCookies))
 
 	return withLogging(mux)
 }

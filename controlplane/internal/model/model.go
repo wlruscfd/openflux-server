@@ -37,6 +37,7 @@ type Key struct {
 	RelayPort       *int
 	// WarpProfileID makes the assigned node dial the internet through that Cloudflare WARP account.
 	WarpProfileID *string
+	HasCookies    bool
 }
 
 func (k Key) BytesUsedTotal() int64 {

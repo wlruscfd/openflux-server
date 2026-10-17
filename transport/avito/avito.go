@@ -103,6 +103,7 @@ var (
 	errNoRoom   = errors.New("avito: no connected room")
 	errStopped  = errors.New("avito: transport stopped")
 	errAuth     = errors.New("avito: cookies rejected")
+	errNoCookie = errors.New("avito: this key has no cookies yet")
 )
 
 func short(id string) string {
@@ -682,6 +683,9 @@ func (t *AvitoTransport) enterRooms() ([]string, error) {
 		return nil, fmt.Errorf("avito client: the url must contain the room list")
 	}
 
+	if t.currentCookies() == "" {
+		return nil, errNoCookie
+	}
 	total := t.config.NumRooms * 2
 	ids := make([]string, 0, total)
 	for i := 0; i < total; i++ {
@@ -904,7 +908,17 @@ func (t *AvitoTransport) ApplyCookies(values map[string]string) error {
 	for k, v := range values {
 		parts = append(parts, k+"="+v)
 	}
-	joined := strings.Join(parts, "; ")
+	t.setCookies(strings.Join(parts, "; "))
+	return nil
+}
+
+func (t *AvitoTransport) ProvideCookies(raw string) {
+	if raw = strings.TrimSpace(raw); raw != "" {
+		t.setCookies(raw)
+	}
+}
+
+func (t *AvitoTransport) setCookies(joined string) {
 	t.cookiesMu.Lock()
 	t.cookies = joined
 	t.cookiesMu.Unlock()
@@ -916,7 +930,6 @@ func (t *AvitoTransport) ApplyCookies(values map[string]string) error {
 		}
 		ws.writeMu.Unlock()
 	}
-	return nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

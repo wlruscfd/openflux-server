@@ -198,6 +198,20 @@ func (a *App) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	if keys == nil {
 		keys = []model.Key{}
 	}
+	ids := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if k.Transport == transportAvito {
+			ids = append(ids, k.ID)
+		}
+	}
+	if with, err := a.fillHasCookies(r, ids); err != nil {
+		writeInternalError(w, r, "list keys failed", err)
+		return
+	} else if len(with) > 0 {
+		for i := range keys {
+			keys[i].HasCookies = with[keys[i].ID]
+		}
+	}
 	writeJSON(w, http.StatusOK, keys)
 }
 
@@ -250,6 +264,11 @@ func (a *App) handleGetKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeInternalError(w, r, "get key failed", err)
 		return
+	}
+	if k.Transport == transportAvito {
+		if with, err := a.fillHasCookies(r, []string{k.ID}); err == nil {
+			k.HasCookies = with[k.ID]
+		}
 	}
 	writeJSON(w, http.StatusOK, k)
 }
