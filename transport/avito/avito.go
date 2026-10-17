@@ -116,7 +116,8 @@ func jittered(d time.Duration) time.Duration {
 	return d + time.Duration(rand.Int63n(int64(d/4)+1))
 }
 
-func createRoom(ctx context.Context, cookies string) (string, error) {
+func createRoom(ctx context.Context, cookies string, slot int) (string, error) {
+	ctx = transport.WithDialHint(ctx, transport.DialHint{Subject: fmt.Sprintf("room-%d", slot), Spread: true})
 	jar, _ := cookiejar.New(nil)
 	u, _ := url.Parse(baseURL)
 	parseCookiesInto(jar, u, cookies)
@@ -690,9 +691,15 @@ func (t *AvitoTransport) enterRooms() ([]string, error) {
 		var roomID string
 		var lastErr error
 		for attempt := 0; attempt < 5; attempt++ {
-			roomID, lastErr = createRoom(t.ctx, t.currentCookies())
-			if lastErr == nil || errors.Is(lastErr, errAuth) || errors.Is(lastErr, errStopped) {
+			roomID, lastErr = createRoom(t.ctx, t.currentCookies(), i)
+			if lastErr == nil || errors.Is(lastErr, errStopped) {
 				break
+			}
+			if errors.Is(lastErr, errAuth) {
+				if !transport.DialHookInstalled() {
+					break
+				}
+				transport.ReportDial(transport.WithDialHint(t.ctx, transport.DialHint{Subject: fmt.Sprintf("room-%d", i)}), lastErr)
 			}
 			wait := t.config.RoomCreatePause * time.Duration(1<<uint(attempt))
 			if wait > 15*time.Second {
@@ -861,7 +868,7 @@ func CreateRoomList(ctx context.Context, cookies string) (string, error) {
 	total := cfg.NumRooms * 2
 	ids := make([]string, 0, total)
 	for i := 0; i < total; i++ {
-		id, err := createRoom(ctx, cookies)
+		id, err := createRoom(ctx, cookies, i)
 		if err != nil {
 			if len(ids) > 0 {
 				break

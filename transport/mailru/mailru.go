@@ -344,7 +344,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			// carrier never came up. Reported by @pirsasha (issue #163).
 			EnableCompression: true,
 			HandshakeTimeout:  15 * time.Second,
-			NetDialContext:    transport.ProtectedHTTPTransport().DialContext,
+			NetDialContext:    transport.DialContext,
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", t.userAgent())

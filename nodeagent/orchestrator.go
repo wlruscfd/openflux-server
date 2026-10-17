@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/p1neappleXpress/OpenFlux/outbound"
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/transport/avito"
 	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
@@ -120,6 +121,10 @@ type Orchestrator struct {
 	warps  map[string]*warp.Tunnel
 
 	lastPollOK atomic.Int64
+
+	proxyMu        sync.Mutex
+	proxy          *outbound.Manager
+	proxyInstalled bool
 }
 
 // Healthy says whether this process has reached the control plane and fetched its keys at least once.
@@ -187,13 +192,16 @@ func (p *portAllocator) release(idx int) {
 
 func (o *Orchestrator) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	go func() { defer wg.Done(); o.pollLoop(ctx) }()
 	go func() { defer wg.Done(); o.usageLoop(ctx) }()
 	go func() { defer wg.Done(); o.heartbeatLoop(ctx) }()
+	go func() { defer wg.Done(); o.proxyLoop(ctx) }()
 
 	wg.Wait()
+
+	o.teardownProxy()
 
 	o.mu.Lock()
 	defer o.mu.Unlock()

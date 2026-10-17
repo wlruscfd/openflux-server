@@ -68,10 +68,18 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("POST /v1/admin/warp", a.withAdmin(a.handleCreateWarp))
 	mux.HandleFunc("DELETE /v1/admin/warp/{id}", a.withAdmin(a.handleDeleteWarp))
 
+	mux.HandleFunc("GET /v1/admin/proxy-keys", a.withAdmin(a.handleListProxyKeys))
+	mux.HandleFunc("POST /v1/admin/proxy-keys", a.withAdmin(a.handleCreateProxyKey))
+	mux.HandleFunc("POST /v1/admin/proxy-keys/import", a.withAdmin(a.handleBulkImportProxyKeys))
+	mux.HandleFunc("PATCH /v1/admin/proxy-keys/{id}", a.withAdmin(a.handlePatchProxyKey))
+	mux.HandleFunc("DELETE /v1/admin/proxy-keys/{id}", a.withAdmin(a.handleDeleteProxyKey))
+
 	mux.HandleFunc("POST /v1/ingest/keys", a.withIngestToken(a.handleIngestKeys))
 
 	mux.HandleFunc("GET /v1/nodes/keys", a.withNodeToken(a.handleNodeListKeys))
 	mux.HandleFunc("GET /v1/nodes/relay-keys", a.withNodeToken(a.handleNodeListRelayKeys))
+	mux.HandleFunc("GET /v1/nodes/proxy-keys", a.withNodeToken(a.handleNodeListProxyKeys))
+	mux.HandleFunc("POST /v1/nodes/proxy-assignments", a.withNodeToken(a.handleNodeSaveAssignments))
 	mux.HandleFunc("POST /v1/nodes/{id}/usage", a.withNodeToken(a.handleNodeUsage))
 	mux.HandleFunc("POST /v1/nodes/{id}/room-list", a.withNodeToken(a.handleNodeRoomList))
 	mux.HandleFunc("POST /v1/nodes/{id}/heartbeat", a.withNodeToken(a.handleNodeHeartbeat))

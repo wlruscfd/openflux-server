@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func stubLookup(t *testing.T, addrs ...string) {
@@ -69,6 +70,16 @@ func TestDialIPv4FirstFallsBackToIPv6(t *testing.T) {
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	// Nothing listens on 127.0.0.1:<port>: the IPv4 attempt is refused.
 	stubLookup(t, "127.0.0.1", "::1")
+
+	// A host may accept an IPv6 loopback listener and still refuse IPv6
+	// loopback connects (Windows returns WSAEACCES). The plain dial below is
+	// the standard library's, so it only ever reports the environment: a
+	// reachable ::1 here that dialIPv4First still cannot use stays a failure.
+	probe, err := net.DialTimeout("tcp6", net.JoinHostPort("::1", port), 5*time.Second)
+	if err != nil {
+		t.Skip("no IPv6 loopback connect:", err)
+	}
+	probe.Close()
 
 	conn, err := dialIPv4First(context.Background(), "tcp", net.JoinHostPort("carrier.test", port))
 	if err != nil {

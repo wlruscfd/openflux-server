@@ -425,6 +425,12 @@ func randomGuestName() string {
 	return "guest_" + hex.EncodeToString(b[:])
 }
 
+// A board that no longer takes guests answers 200 with a page that carries no guest identity and
+// no error of its own. Saying "the identity is missing" there points at the parser and sends the
+// reader off to re-reverse the carrier, which is exactly how this page was once mistaken for a
+// broken frontend.
+var accessDeniedRe = regexp.MustCompile(`Нет доступа к доске|access to the board`)
+
 func jsStringField(html, name string) string {
 	re := regexp.MustCompile(name + `\s*:\s*"([^"]*)"`)
 	m := re.FindStringSubmatch(html)
@@ -450,7 +456,7 @@ func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 		Jar:     jar,
 		Timeout: mtsHTTPTimeout,
 		Transport: &http.Transport{
-			DialContext:           transport.ProtectedDialer().DialContext,
+			DialContext:           transport.DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: mtsHTTPTimeout,
 		},
@@ -498,6 +504,9 @@ func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 		return mtsInfo{}, fmt.Errorf("board UID missing from page")
 	}
 	if info.token == "" || info.clientUID == "" || info.signature == "" {
+		if accessDeniedRe.MatchString(html) {
+			return mtsInfo{}, fmt.Errorf("the board refuses guest access; its owner has to open it for guests or the link has expired")
+		}
 		return mtsInfo{}, fmt.Errorf("guest identity missing from page (token=%d clientUID=%d signature=%d)",
 			len(info.token), len(info.clientUID), len(info.signature))
 	}
@@ -716,7 +725,7 @@ func (t *Transport) dialAndServe(attempt int, info mtsInfo, base, alias string) 
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: mtsDialTimeout,
-		NetDialContext:   transport.ProtectedDialer().DialContext,
+		NetDialContext:   transport.DialContext,
 	}
 	utils.Debugf("[MTS] dial %s (attempt %d)", wsURL, attempt)
 	conn, resp, err := dialer.Dial(wsURL, header)

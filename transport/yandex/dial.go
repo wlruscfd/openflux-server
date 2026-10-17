@@ -37,6 +37,12 @@ func carrierDialer(timeout time.Duration) *net.Dialer {
 	return netbind.Wrap(d)
 }
 
+func carrierDialContext(ctx context.Context, network, address string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return transport.DialContext(ctx, network, address)
+}
+
 // lookupIPAddr is the resolver; replaced in tests.
 var lookupIPAddr = net.DefaultResolver.LookupIPAddr
 
@@ -44,11 +50,11 @@ var lookupIPAddr = net.DefaultResolver.LookupIPAddr
 // IPv6 ones. It follows the interface binding of package netbind.
 func dialIPv4First(ctx context.Context, network, address string) (net.Conn, error) {
 	if network != "tcp" {
-		return carrierDialer(30*time.Second).DialContext(ctx, network, address)
+		return carrierDialContext(ctx, network, address, 30*time.Second)
 	}
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || net.ParseIP(host) != nil {
-		return carrierDialer(30*time.Second).DialContext(ctx, network, address)
+		return carrierDialContext(ctx, network, address, 30*time.Second)
 	}
 	addrs, err := lookupIPAddr(ctx, host)
 	if err != nil {
@@ -67,7 +73,7 @@ func dialIPv4First(ctx context.Context, network, address string) (net.Conn, erro
 		if a.IP.To4() != nil {
 			netw = "tcp4"
 		}
-		conn, err := carrierDialer(carrierDialTimeout).DialContext(ctx, netw, net.JoinHostPort(a.IP.String(), port))
+		conn, err := carrierDialContext(ctx, netw, net.JoinHostPort(a.IP.String(), port), carrierDialTimeout)
 		if err == nil {
 			return conn, nil
 		}

@@ -243,6 +243,13 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 			utils.Debugf("[BOARDS] redirect to captcha: %s", shortStr(loc, 100))
 			return errCaptchaRequired
 		}
+		// A share link that names the board without the trailing slash is answered with a plain
+		// 301 to the same board with it. Refusing every redirect that is not a captcha turns that
+		// into "boards: unexpected redirect" and the carrier never comes up at all.
+		if sameHost(loc, boardsBase) {
+			utils.Debugf("[BOARDS] following %d to %s", resp.StatusCode, shortStr(loc, 100))
+			return t.getAllowCaptcha(client, loc, hash)
+		}
 		return fmt.Errorf("boards: unexpected redirect to %s", shortStr(loc, 100))
 	}
 	body, _ := io.ReadAll(resp.Body)
@@ -254,6 +261,17 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 }
 
 var errBoardsCaptchaBlocked = fmt.Errorf("boards: captcha solve failed")
+
+func sameHost(loc, base string) bool {
+	u, err := url.Parse(loc)
+	if err != nil {
+		return false
+	}
+	if u.IsAbs() {
+		return strings.EqualFold(u.Host, base)
+	}
+	return true
+}
 
 // authorize: GET /whiteboard/?hash=<hash> (may redirect to showcaptchafast) -> POST request-guest-token -> POST get-whiteboard-info.
 func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
@@ -268,7 +286,7 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 	client := &http.Client{
 		Jar:       jar,
 		Timeout:   15 * time.Second,
-		Transport: &http.Transport{DialContext: transport.ProtectedDialer().DialContext},
+		Transport: &http.Transport{DialContext: transport.DialContext},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -635,7 +653,7 @@ func (t *BoardsTransport) connectAndServe(attempt int, info boardsInfo) error {
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 15 * time.Second,
-		NetDialContext:   transport.ProtectedDialer().DialContext,
+		NetDialContext:   transport.DialContext,
 	}
 	utils.Debugf("[BOARDS] dial %s", wsURL)
 	conn, resp, err := dialer.Dial(wsURL, header)

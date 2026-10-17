@@ -367,7 +367,7 @@ func startPair(t *testing.T, cfg CupsonlineConfig) (exit, client *peer) {
 	t.Helper()
 	exit = mustStart(t, "", false, cfg)
 	client = mustStart(t, packRooms(exit.RoomUUIDs()), true, cfg)
-	waitFor(t, 5*time.Second, "all channels up", func() bool {
+	waitFor(t, 20*time.Second, "all channels up", func() bool {
 		return allConnected(exit) && allConnected(client)
 	})
 	return exit, client

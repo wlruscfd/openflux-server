@@ -42,6 +42,38 @@ export interface KeyDTO {
 
 export type KeyStatus = 'active' | 'disabled' | 'over_quota' | 'expired';
 
+export const PROXY_CARRIERS = [
+	'yandex',
+	'yandex_multistream',
+	'boards',
+	'mailru',
+	'mts',
+	'telemost',
+	'cupsonline',
+	'avito',
+	'oneme'
+] as const;
+
+export interface ProxyKeyDTO {
+	id: string;
+	name: string;
+	kind: string;
+	server: string;
+	port: number;
+	priority: number;
+	enabled: boolean;
+	carriers: string[];
+	created_at: string;
+}
+
+export interface BulkImportResult {
+	created: number;
+	rejected: number;
+	malformed: number;
+	errors?: string[];
+	full?: boolean;
+}
+
 export function keyStatus(k: KeyDTO, now = Date.now()): KeyStatus {
 	if (!k.Enabled) return 'disabled';
 	if (k.ExpiresAt && now > new Date(k.ExpiresAt).getTime()) return 'expired';
@@ -236,6 +268,18 @@ export const api = {
 		request<CreateIngestTokenResult>('POST', '/v1/admin/ingest-tokens', { label, scope }),
 	setIngestTokenEnabled: (id: string, enabled: boolean) =>
 		request('POST', `/v1/admin/ingest-tokens/${id}/${enabled ? 'enable' : 'disable'}`),
+
+	// proxy keys
+	listProxyKeys: () => request<ProxyKeyDTO[]>('GET', '/v1/admin/proxy-keys'),
+	createProxyKey: (body: { link: string; name?: string; priority?: number; carriers?: string[] }) =>
+		request<ProxyKeyDTO>('POST', '/v1/admin/proxy-keys', body),
+	importProxyKeys: (body: { links: string; carriers?: string[]; priority?: number }) =>
+		request<BulkImportResult>('POST', '/v1/admin/proxy-keys/import', body),
+	patchProxyKey: (
+		id: string,
+		body: { name?: string; priority?: number; enabled?: boolean; carriers?: string[]; link?: string },
+	) => request<ProxyKeyDTO>('PATCH', `/v1/admin/proxy-keys/${id}`, body),
+	deleteProxyKey: (id: string) => request<null>('DELETE', `/v1/admin/proxy-keys/${id}`),
 
 	// stats & system
 	statsSummary: () => request<StatsSummaryDTO>('GET', '/v1/admin/stats/summary'),

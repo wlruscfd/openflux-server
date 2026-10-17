@@ -441,13 +441,15 @@ func createRooms(ctx context.Context, baseURL string, n int, pause time.Duration
 	for i := 0; i < n; i++ {
 		var a *cupsAuth
 		for attempt := 0; attempt < 6; attempt++ {
-			a, lastErr = authorize(ctx, baseURL, nil)
+			attemptCtx := transport.WithDialHint(ctx, transport.DialHint{Subject: fmt.Sprintf("room-%d", i), Spread: true})
+			a, lastErr = authorize(attemptCtx, baseURL, nil)
 			if lastErr == nil {
 				break
 			}
 			msg := lastErr.Error()
 			var wait time.Duration
 			if strings.Contains(msg, "403") || strings.Contains(msg, "429") {
+				transport.ReportDial(attemptCtx, lastErr)
 				wait = delay * time.Duration(1<<uint(attempt))
 				if wait > 30*time.Second {
 					wait = 30 * time.Second
@@ -761,7 +763,7 @@ func (w *cupsWS) connectAndServe() error {
 		return errStopped
 	}
 	dialer := websocket.Dialer{
-		NetDialContext:   transport.ProtectedHTTPTransport().DialContext,
+		NetDialContext:   transport.DialContext,
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,
