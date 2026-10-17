@@ -168,3 +168,46 @@ func TestOverlayFailuresRollBackThenDisable(t *testing.T) {
 		t.Fatal("a disabled transport must not be opened")
 	}
 }
+
+func TestCatalogDecidesWhichTransportsAreInstalled(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	old := projectKeyHex
+	projectKeyHex = func() string { return hex.EncodeToString(pub) }
+	t.Cleanup(func() { projectKeyHex = old })
+
+	path := filepath.Join(t.TempDir(), "p.flux")
+	m := script.PackageManifest{ID: "boards", Name: "Boards", Version: "1.0.0", Author: "test"}
+	if err := script.WritePackage(path, m, []byte("var Transport = {};"), nil, priv, true); err != nil {
+		t.Fatal(err)
+	}
+	pkg, _ := os.ReadFile(path)
+	sum := sha256.Sum256(pkg)
+
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/catalog.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(catalogFile{Format: 1, Transports: []catalogEntry{
+			{ID: "boards", Update: srv.URL + "/boards/update.json"},
+			{ID: "../evil", Update: srv.URL + "/boards/update.json"},
+			{ID: "a.b", Update: srv.URL + "/boards/update.json"},
+		}})
+	})
+	mux.HandleFunc("/boards/update.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(script.UpdateIndex{Format: 1, ID: "boards", Channels: map[string]script.IndexChannel{
+			"stable": {Version: "1.0.0", URL: "pkg.flux", SHA256: hex.EncodeToString(sum[:])},
+		}})
+	})
+	mux.HandleFunc("/boards/pkg.flux", func(w http.ResponseWriter, r *http.Request) { w.Write(pkg) })
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	got := updates(t, TransportsUpdate(dir, srv.URL+"/catalog.json", "stable"))
+	if len(got) != 1 || got[0].ID != "boards" || got[0].Status != script.UpdateInstalled {
+		t.Fatalf("only the safe listed transport must be installed: %+v", got)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*"))
+	if len(files) != 1 {
+		t.Fatalf("unexpected files: %v", files)
+	}
+}

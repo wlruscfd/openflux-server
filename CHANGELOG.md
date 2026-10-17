@@ -17,6 +17,8 @@ All notable changes to the OpenFlux core. Format loosely follows
 - **Avito keys in the panel.** Creating a key of type `avito` takes the cookies of an Avito account (Cookie header, cookies.txt or a
   JSON export, with instructions in the panel); they are stored encrypted, only reach the node that runs the key and can be replaced
   from the edit dialog without restarting the key.
+- **The transports repository decides what a phone installs.** The app no longer carries a list of dynamic transports: it
+  reads `catalog.json` from openflux-transports and installs and updates every package listed there.
 - **Per-host request pacing.** Mail.ru API calls go through the same gate (0.2 per second by default), so a node starting dozens of
   keys no longer hits the document server with a burst.
 
