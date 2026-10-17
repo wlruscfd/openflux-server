@@ -105,6 +105,7 @@ func main() {
 		cfg.ExitMode = exitMode
 		cfg.PortRangeSize = *portRangeSize
 		cfg.CaptchaSolveMode = parseCaptchaSolveMode(*captchaSolveMode)
+		cfg.AvitoCookies = avitoCookies()
 		orch := nodeagent.NewOrchestrator(cfg)
 		if *autoUpdate {
 			if exe, err := os.Executable(); err == nil {
@@ -202,6 +203,18 @@ func main() {
 		socks5Server := socks5.NewSOCKS5Server(*socksAddr, tun)
 		log.Fatal(socks5Server.Start())
 	}
+}
+
+func avitoCookies() string {
+	if v := strings.TrimSpace(os.Getenv("NODEAGENT_AVITO_COOKIES")); v != "" {
+		return v
+	}
+	if path := os.Getenv("NODEAGENT_AVITO_COOKIES_FILE"); path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(raw))
+		}
+	}
+	return ""
 }
 
 func parseCaptchaSolveMode(s string) yandex.CaptchaSolveMode {

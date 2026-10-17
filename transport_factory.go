@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/transport/control"
@@ -12,6 +13,8 @@ import (
 // yandexCookiesFile is --yandex-cookies-file: a Netscape cookies.txt with
 // a Yandex login that every vyandex transport starts with.
 var yandexCookiesFile string
+
+var avitoCookiesStr = os.Getenv("AVITO_COOKIES")
 
 // transportFactory builds a raw transport from a control.TransportConfig.
 // main.go passes it into manager.New, and manager calls it whenever the peer
@@ -31,6 +34,7 @@ func transportFactory(baseCfg transport.TransportConfig, isExit bool) manager.Fa
 			Base:              baseCfg,
 			IsExit:            isExit,
 			YandexCookiesFile: yandexCookiesFile,
+			AvitoCookies:      avitoCookiesStr,
 		})
 	}
 }

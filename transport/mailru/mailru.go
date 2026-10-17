@@ -758,6 +758,9 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	req.Header.Set("X-Api-Version", "4")
 	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
 
+	if !transport.WaitHostSlot("cloud.mail.ru", t.Done()) {
+		return MailruDocsInfo{}, errors.New("transport stopped")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return MailruDocsInfo{}, err

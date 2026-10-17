@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/avito"
 	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
 	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
 	"github.com/p1neappleXpress/OpenFlux/transport/mts"
@@ -34,6 +35,7 @@ type Config struct {
 	// PortRangeSize: raw mode's outbound ports per key - trades keys-per-node against connections-per-key; 0 = DefaultPortRangeSize.
 	PortRangeSize    int
 	CaptchaSolveMode yandex.CaptchaSolveMode
+	AvitoCookies     string
 }
 
 const DefaultPortRangeSize = 96
@@ -318,6 +320,31 @@ func cookieFingerprint(jar string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+func (o *Orchestrator) publishRoomLists(trans transport.Transport, k RemoteKey) {
+	rl, ok := trans.(interface {
+		OnRoomList(func(string))
+		RoomList() string
+	})
+	if !ok {
+		return
+	}
+	var last atomic.Pointer[string]
+	rl.OnRoomList(func(list string) {
+		if list == "" || last.Load() == &list {
+			return
+		}
+		published := list
+		last.Store(&published)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if _, err := o.client.ReportRoomList(ctx, k.ID, published); err != nil {
+				utils.Debugf("[NODEAGENT] key %s (%s): room list report failed: %v", k.ID, k.Transport, err)
+			}
+		}()
+	})
+}
+
 func (o *Orchestrator) reconcile(ctx context.Context) {
 	o.reconcileRelayExits(ctx)
 	o.applyCookies(ctx)
@@ -330,9 +357,14 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 	o.lastPollOK.Store(time.Now().UnixNano())
 
 	active := make(map[string]RemoteKey, len(keys))
+	avitoKeys := 0
 	for _, k := range keys {
 		active[k.ID] = k
+		if k.Transport == "avito" {
+			avitoKeys++
+		}
 	}
+	avito.SetFleetSize(avitoKeys)
 
 	var toStart []RemoteKey
 	var toStop []*worker
@@ -357,8 +389,8 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
-		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" && k.Transport != "mts" && k.Transport != "telemost" && k.Transport != "cupsonline" {
-			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline transports today", id)
+		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" && k.Transport != "mts" && k.Transport != "telemost" && k.Transport != "cupsonline" && k.Transport != "avito" {
+			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline/avito transports today", id)
 			continue
 		}
 		if k.Transport == "yandex_multistream" && len(k.DocURLs) < 2 {
@@ -613,29 +645,16 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			return nil, fmt.Errorf("key %s: cupsonline transport doesn't support e2e_encryption yet", k.ID)
 		}
 		trans = transport.NewBatchedTransport(cupsonline.NewCupsonlineTransport(k.DocURL, transport.DefaultConfig(), false))
-		if rl, ok := trans.(interface {
-			OnRoomList(func(string))
-			RoomList() string
-		}); ok {
-			// The exit creates its own rooms, so the key starts with an empty doc_url and the
-			// client has nothing to open until the list is published. Reported only on an actual
-			// change, so a reconnect storm does not turn into a report storm.
-			var last atomic.Pointer[string]
-			rl.OnRoomList(func(list string) {
-				if list == "" || last.Load() == &list {
-					return
-				}
-				published := list
-				last.Store(&published)
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-					defer cancel()
-					if _, err := o.client.ReportRoomList(ctx, k.ID, published); err != nil {
-						utils.Debugf("[NODEAGENT] key %s (%s): room list report failed: %v", k.ID, k.Transport, err)
-					}
-				}()
-			})
+		o.publishRoomLists(trans, k)
+	case "avito":
+		if k.E2EEncryption {
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, fmt.Errorf("key %s: avito transport doesn't support e2e_encryption yet", k.ID)
 		}
+		trans = transport.NewStripedRoom(avito.NewAvitoTransport(k.DocURL, transport.DefaultConfig(), o.cfg.AvitoCookies, false))
+		o.publishRoomLists(trans, k)
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))
 		for i, url := range k.DocURLs {

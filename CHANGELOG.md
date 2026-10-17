@@ -5,6 +5,19 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Avito transport (type `avito`)** from upstream, built for a node with many keys: one pooled HTTP transport, room creation and
+  connects paced per host (`OPENFLUX_HOST_RATE`, e.g. `code.avito.ru=4,cloud.mail.ru=0.2` per second), WebSocket pings so an idle room
+  does not reconnect every 90 s, jittered reconnects that return to the minimum delay after a healthy spell, 32 KB socket buffers
+  instead of 256 KB, rejected cookies fail the key at once, and fewer rooms per key as the node serves more avito keys.
+- **Per-host request pacing.** Mail.ru API calls go through the same gate (0.2 per second by default), so a node starting dozens of
+  keys no longer hits the document server with a burst.
+
+### Changed
+
+- **Cups.online carries bigger messages faster** (upstream tuning): 8 KB per message, batches up to 22 KB, one message every 12 ms.
+
 ## [0.5.0] - 2026-10-11
 
 ### Added

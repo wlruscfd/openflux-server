@@ -119,18 +119,16 @@ func DefaultCupsonlineConfig() CupsonlineConfig {
 		RoomGoneRetryMax: 30 * time.Minute,
 
 		BatchMaxPackets: 256,
-		BatchMaxBytes:   11000,
-		// 4096 байт данных → 2 байта заголовка → ~342 курсора → провод ~17 KB,
-		// с запасом под проверенными ~21 KB и вчетверо меньше потолка.
-		MaxMessageData: 4096,
+		BatchMaxBytes:   22000,
+		// 8192 байт данных → 2 байта заголовка → ~684 курсора → провод ~34 KB;
+		// проверено: сервер принимает без ошибок.
+		MaxMessageData: 8192,
 		MaxCursors:     1000,
 		BatchTimeout:   2 * time.Millisecond,
-		// 18ms (~55 msg/s per channel) — calibrated against the live server
-		// (TestLiveThroughputCalibrate): the knee of throughput (~80 KB/s per
-		// channel; faster doesn't help, the server itself is the ceiling) with
-		// no reconnects and margin under the burst that stalled the old,
-		// unpaced code.
-		SendInterval: 18 * time.Millisecond,
+		// 12ms (~83 msg/s per channel) — calibrated by bench_tune.py:
+		// 8192B@12ms = 447 KB/s per lane (2.8× vs old 4096@18ms=159 KB/s);
+		// 10ms triggers 403.
+		SendInterval: 12 * time.Millisecond,
 
 		// В очереди кадры кодека (до ~8 KB), а не IP-пакеты: очередь длиннее
 		// — это уже не буфер, а секунды задержки.

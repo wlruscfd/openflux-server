@@ -61,7 +61,7 @@
 	let creating = $state(false);
 	let createOpen = $state(false);
 	const isMultistream = $derived(transport === 'yandex_multistream');
-	const transportNeedsDocUrl = $derived(transport !== 'cupsonline');
+	const transportNeedsDocUrl = $derived(transport !== 'cupsonline' && transport !== 'avito');
 
 	// result (fresh token / deeplink)
 	let result = $state<CreateKeyResult | RotateKeyResult | null>(null);
@@ -103,7 +103,7 @@
 	let editBusy = $state(false);
 	let editError = $state<string | null>(null);
 	const editIsMultistream = $derived(editTransport === 'yandex_multistream');
-	const editTransportNeedsDocUrl = $derived(editTransport !== 'cupsonline');
+	const editTransportNeedsDocUrl = $derived(editTransport !== 'cupsonline' && editTransport !== 'avito');
 
 	let listError = $state<string | null>(null);
 
@@ -116,6 +116,7 @@
 		mts: 'keys.docUrlMts',
 		telemost: 'keys.docUrlTelemost',
 		cupsonline: 'keys.docUrlCups',
+		avito: 'keys.docUrlAvito',
 		direct: 'keys.docUrlDirect'
 	};
 	const docPlaceholder: Record<string, string> = {
@@ -127,6 +128,7 @@
 		mts: 'keys.docUrlPhMts',
 		telemost: 'keys.docUrlPhTelemost',
 		cupsonline: 'keys.docUrlPhCups',
+		avito: 'keys.docUrlPhAvito',
 		direct: 'keys.docUrlPhDirect'
 	};
 	const docLabelFor = (tr: string) => t(docLabel[tr] ?? 'keys.docUrlGeneric');
@@ -481,6 +483,7 @@
 					<option value="mts">mts</option>
 					<option value="telemost">telemost</option>
 					<option value="cupsonline">cupsonline</option>
+					<option value="avito">avito</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>
@@ -674,6 +677,7 @@
 					<option value="mts">mts</option>
 					<option value="telemost">telemost</option>
 					<option value="cupsonline">cupsonline</option>
+					<option value="avito">avito</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>

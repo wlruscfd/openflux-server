@@ -64,6 +64,8 @@ export const ru = {
 	'keys.docUrlPhTelemost': 'https://telemost.yandex.ru/j/…',
 	'keys.docUrlCups': 'Список комнат cups.online (base64)',
 	'keys.docUrlPhCups': 'WyI0OTdkZDBmZC01MGMy…',
+	'keys.docUrlAvito': 'Список комнат avito (base64)',
+	'keys.docUrlPhAvito': 'WyJyb29tLTEi…',
 	'keys.docUrlDirect': 'Ссылка (для direct не нужна)',
 	'keys.docUrlPhDirect': '(не используется для direct)',
 

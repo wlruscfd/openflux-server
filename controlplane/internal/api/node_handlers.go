@@ -161,8 +161,8 @@ func (a *App) handleNodeRoomList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "key is not assigned to this node")
 		return
 	}
-	if k.Transport != transportCupsOnline {
-		writeError(w, http.StatusBadRequest, "room lists are only for cupsonline keys")
+	if !transportMakesOwnRooms(k.Transport) {
+		writeError(w, http.StatusBadRequest, "room lists are only for cupsonline and avito keys")
 		return
 	}
 
