@@ -23,6 +23,7 @@ import (
 	"github.com/pierrec/lz4/v4"
 
 	"github.com/p1neappleXpress/OpenFlux/netbind"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
@@ -284,6 +285,10 @@ func (t *ScriptTransport) dialer() *net.Dialer {
 	})
 }
 
+func (t *ScriptTransport) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return transport.DialContext(ctx, network, address)
+}
+
 // ---- http.fetch ----
 
 func registerHTTP(vm *goja.Runtime, t *ScriptTransport) {
@@ -487,7 +492,7 @@ func registerWS(vm *goja.Runtime, t *ScriptTransport) {
 		utils.SafeGo("script."+t.name+".ws-dial", func() {
 			dialer := websocket.Dialer{
 				HandshakeTimeout: 15 * time.Second,
-				NetDialContext:   t.dialer().DialContext,
+				NetDialContext:   t.dialContext,
 			}
 			conn, resp, err := dialer.Dial(reqURL, headers)
 			t.loop.RunOnLoop(func(vm *goja.Runtime) {

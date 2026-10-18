@@ -576,7 +576,7 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		dialer := websocket.Dialer{
 			HandshakeTimeout:  10 * time.Second,
 			EnableCompression: true, // negotiated (permessage-deflate); harmless if the server ignores it
-			NetDialContext:    transport.ProtectedDialer().DialContext,
+			NetDialContext:    transport.DialContext,
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", browserUserAgent)
@@ -1296,7 +1296,7 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	client := &http.Client{
 		Jar:       jar,
 		Timeout:   30 * time.Second,
-		Transport: &http.Transport{DialContext: transport.ProtectedDialer().DialContext},
+		Transport: &http.Transport{DialContext: transport.DialContext},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

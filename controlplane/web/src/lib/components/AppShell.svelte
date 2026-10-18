@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
 	import { goto } from '$app/navigation';
-	import { LayoutDashboard, KeyRound, Server, PlugZap, Sun, Moon, LogOut } from 'lucide-svelte';
+	import { LayoutDashboard, KeyRound, Server, PlugZap, Sun, Moon, LogOut, Network } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 	import { i18n } from '$lib/i18n';
 	import { LANGS, type Lang } from '$lib/i18n';
@@ -22,6 +22,12 @@
 		{ href: homeHref, key: 'nav.dashboard', Icon: LayoutDashboard, match: (p: string) => p === homeHref.replace(/\/$/, '') || p === homeHref },
 		{ href: `${base}/keys`, key: 'nav.keys', Icon: KeyRound, match: (p: string) => p.startsWith(`${base}/keys`) },
 		{ href: `${base}/nodes`, key: 'nav.nodes', Icon: Server, match: (p: string) => p.startsWith(`${base}/nodes`) },
+		{
+			href: `${base}/proxy-keys`,
+			key: 'nav.proxyKeys',
+			Icon: Network,
+			match: (p: string) => p.startsWith(`${base}/proxy-keys`)
+		},
 		{ href: `${base}/ingest`, key: 'nav.ingest', Icon: PlugZap, match: (p: string) => p.startsWith(`${base}/ingest`) }
 	];
 
@@ -114,7 +120,7 @@
 		class="of-tabbar fixed inset-x-0 bottom-0 z-40 border-t border-[var(--of-line)] bg-[var(--of-panel)]/92 backdrop-blur lg:hidden"
 		aria-label="Primary"
 	>
-		<div class="mx-auto grid max-w-lg grid-cols-4">
+		<div class="mx-auto grid max-w-lg grid-cols-5">
 			{#each items as item (item.key)}
 				{@const active = item.match($page.url.pathname)}
 				<a

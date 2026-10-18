@@ -28,7 +28,7 @@ func siteCookies(u *url.URL, values map[string]string) []*http.Cookie {
 }
 
 func solveCaptchaProtected(docURL string, jar http.CookieJar, userAgent string) (string, error) {
-	rt := &http.Transport{DialContext: transport.ProtectedDialer().DialContext}
+	rt := &http.Transport{DialContext: transport.DialContext}
 	return solveCaptcha(docURL, jar, userAgent, rt)
 }
 

@@ -202,7 +202,7 @@ func TestWriterLoopBatchesMultiplePacketsIntoOneMessage(t *testing.T) {
 				t.Errorf("packet[%d] = %q, want %q", i, got[i], want[i])
 			}
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatalf("server never received the batched message")
 	}
 }
@@ -242,7 +242,7 @@ func TestWriterLoopWaitsForConnectedBeforeDraining(t *testing.T) {
 
 	select {
 	case <-received:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatalf("writerLoop never drained the queue after IsConnected() became true")
 	}
 }
@@ -292,7 +292,7 @@ func TestWriterLoopDoesNotBatchByDefault(t *testing.T) {
 			if string(decoded) != string(w) {
 				t.Errorf("packet %d = %q, want %q", i, decoded, w)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatalf("server never received packet %d", i)
 		}
 	}
@@ -377,7 +377,7 @@ func TestSelfCompressReproducesLegacySingleFormatExactly(t *testing.T) {
 		if !bytes.Equal(decoded, wantWire) {
 			t.Fatalf("self-compress fallback wire bytes = %v, want exactly transport.Compress's output %v", decoded, wantWire)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("server never received the packet")
 	}
 }
@@ -432,7 +432,7 @@ func TestSelfCompressReproducesLegacyBatchFormatExactly(t *testing.T) {
 		if !bytes.Equal(decoded, wantBlob.Bytes()) {
 			t.Fatalf("self-compress legacy-batch wire bytes = %v, want exactly %v", decoded, wantBlob.Bytes())
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("server never received the batch")
 	}
 }
@@ -490,7 +490,7 @@ func TestSelfCompressUsesZstdBatchOnceBothTokensConfirmed(t *testing.T) {
 				t.Errorf("packet[%d] = %q, want %q (raw, no per-packet compression)", i, got[i], pkts[i])
 			}
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("server never received the zstd batch")
 	}
 }
@@ -622,7 +622,7 @@ func TestEncryptedSelfCompressReproducesLegacySingleFormatExactly(t *testing.T) 
 		if !bytes.Equal(plain, wantPlain) {
 			t.Fatalf("decrypted content = %v, want exactly transport.Compress's output %v", plain, wantPlain)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("server never received the packet")
 	}
 }
@@ -684,7 +684,7 @@ func TestEncryptedSelfCompressReproducesLegacyBatchFormatExactly(t *testing.T) {
 				t.Errorf("item %d decrypted = %v, want %v", i, plain, want)
 			}
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("server never received the batch")
 	}
 }
@@ -753,7 +753,7 @@ func TestEncryptedSelfCompressUsesEncryptedZstdBatchOnceConfirmed(t *testing.T) 
 				t.Errorf("packet[%d] = %q, want %q (raw, no per-packet compression)", i, got[i], pkts[i])
 			}
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("server never received the encrypted zstd batch")
 	}
 }

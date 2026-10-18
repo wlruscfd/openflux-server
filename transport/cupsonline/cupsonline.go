@@ -763,7 +763,7 @@ func (w *cupsWS) connectAndServe() error {
 		return errStopped
 	}
 	dialer := websocket.Dialer{
-		NetDialContext:   transport.ProtectedHTTPTransport().DialContext,
+		NetDialContext:   transport.DialContext,
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,

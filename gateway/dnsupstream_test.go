@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"testing"
@@ -155,6 +156,7 @@ func TestQueryDoHRoundTrip(t *testing.T) {
 		body := wantReply
 		fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/dns-message\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", len(body))
 		conn.Write(body)
+		io.Copy(io.Discard, conn)
 	}()
 
 	s := &Server{

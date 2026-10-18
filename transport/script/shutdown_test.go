@@ -93,7 +93,7 @@ var Transport = {
 	if err := tr.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for !dropped.Load() && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}

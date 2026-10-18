@@ -10,7 +10,7 @@ import (
 )
 
 func protectedWSDialer() *websocket.Dialer {
-	return &websocket.Dialer{NetDialContext: transport.ProtectedDialer().DialContext}
+	return &websocket.Dialer{NetDialContext: transport.DialContext}
 }
 
 var vvv bool

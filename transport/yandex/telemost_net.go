@@ -49,7 +49,7 @@ func (n protectedNet) ListenUDP(network string, laddr *net.UDPAddr) (transport.U
 }
 
 func (n protectedNet) Dial(network, address string) (net.Conn, error) {
-	return otransport.ProtectedDialer().Dial(network, address)
+	return otransport.DialContext(context.Background(), network, address)
 }
 
 func (n protectedNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (transport.UDPConn, error) {
@@ -96,7 +96,7 @@ func telemostHTTPClient() *http.Client {
 
 func telemostWSDialer() *websocket.Dialer {
 	return &websocket.Dialer{
-		NetDialContext:   otransport.ProtectedHTTPTransport().DialContext,
+		NetDialContext:   otransport.DialContext,
 		HandshakeTimeout: 45 * time.Second,
 	}
 }
