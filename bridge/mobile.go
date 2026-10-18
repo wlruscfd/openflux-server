@@ -10,14 +10,15 @@ import (
 	"time"
 
 	"github.com/p1neappleXpress/OpenFlux/gateway"
+	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/socks5"
 	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/avito"
 	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
 	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
 	"github.com/p1neappleXpress/OpenFlux/transport/mts"
 	"github.com/p1neappleXpress/OpenFlux/transport/oneme"
 	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
-	"github.com/p1neappleXpress/OpenFlux/nodetunnel"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
@@ -42,7 +43,7 @@ type Protector interface {
 type Config struct {
 	Mode string `json:"mode"` // must be "manual" - see buildTransport
 
-	Transport string `json:"transport"` // "yandex" (default), "volga", "max", "boards", "mailru", "mts", "telemost", "cupsonline", or "yandex_multistream"
+	Transport string `json:"transport"` // "yandex" (default), "volga", "max", "boards", "mailru", "mts", "telemost", "cupsonline", "avito", or "yandex_multistream"
 	DocURL    string `json:"doc_url"`   // yandex, volga
 	MaxToken  string `json:"max_token"` // max: your MAX account's own auth token
 	MaxUID    int64  `json:"max_uid"`   // max: the contact's user ID to place the call to
@@ -50,6 +51,10 @@ type Config struct {
 	DocURLs []string `json:"doc_urls,omitempty"`
 
 	KeyToken string `json:"key_token,omitempty"`
+
+	// ScriptsDir holds the dynamic transport packages; empty means the built-in transports only.
+	ScriptsDir string `json:"scripts_dir,omitempty"`
+	AvitoCookies string `json:"avito_cookies,omitempty"`
 
 	E2EEncryption bool `json:"e2e_encryption,omitempty"`
 
@@ -363,7 +368,9 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapGeneric(mailru.NewMailruDocsTransport(cfg.DocURL, transportConfig), cfg), nil
+		return withOverlay(cfg, "mailru", func() transport.Transport {
+			return mailru.NewMailruDocsTransport(cfg.DocURL, transportConfig)
+		}, func(inner transport.Transport) transport.Transport { return wrapGeneric(inner, cfg) }), nil
 	case "mts":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
@@ -373,7 +380,14 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")
 		}
-		return wrapBatched(cupsonline.NewCupsonlineTransport(cfg.DocURL, transportConfig, true), cfg), nil
+		return withOverlay(cfg, "cupsonline", func() transport.Transport {
+			return cupsonline.NewCupsonlineTransport(cfg.DocURL, transportConfig, true)
+		}, func(inner transport.Transport) transport.Transport { return wrapBatched(inner, cfg) }), nil
+	case "avito":
+		if cfg.DocURL == "" {
+			return nil, fmt.Errorf("doc_url is required")
+		}
+		return transport.NewStripedRoom(avito.NewAvitoTransport(cfg.DocURL, transportConfig, cfg.AvitoCookies, true)), nil
 	case "telemost":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")

@@ -23,7 +23,13 @@ const transportYandexMultistream = "yandex_multistream"
 
 const transportCupsOnline = "cupsonline"
 
-func transportTakesDocument(transport string) bool { return transport != transportCupsOnline }
+const transportAvito = "avito"
+
+func transportMakesOwnRooms(transport string) bool {
+	return transport == transportCupsOnline || transport == transportAvito
+}
+
+func transportTakesDocument(transport string) bool { return !transportMakesOwnRooms(transport) }
 
 type createdKey struct {
 	ID       string `json:"id"`
@@ -84,7 +90,7 @@ func createKeyHandler(a *App, w http.ResponseWriter, r *http.Request, forcedOwne
 			urls = req.DocURLs
 			req.DocURL = "" // ignore a stray doc_url - doc_urls is authoritative for this transport
 		} else if !transportTakesDocument(req.Transport) {
-			// cupsonline's exit creates its own rooms, so the key carries no document and the
+			// cupsonline and avito exits create their own rooms, so the key carries no document and the
 			// doc_url uniqueness check below would only ever compare empty strings.
 			urls = nil
 			req.DocURLs = nil

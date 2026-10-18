@@ -22,7 +22,10 @@ const OfficialKeyHex = "d8bf9c958b994c2faab886cade5f28213f254911f87abe5e34756a28
 // signed by another official key is accepted and re-pins the install to it
 // (see UpdateReport.NewKey). A compromised key is retired by dropping it from
 // this list in a release; installs pinned to it then stop being "official".
-var officialKeys = []string{OfficialKeyHex}
+// ForkKeyHex signs the packages of the transports repository this fork follows.
+const ForkKeyHex = "ed9618e50d8377a0c645d225d307cfd9e6a9ef48645e33bd19ebe0a1fde17f44"
+
+var officialKeys = []string{ForkKeyHex, OfficialKeyHex}
 
 // IsOfficialKey reports whether keyHex is one of the project's own keys.
 func IsOfficialKey(keyHex string) bool {
