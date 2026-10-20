@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
@@ -694,35 +695,43 @@ func (t *AvitoTransport) enterRooms() ([]string, error) {
 		}
 		var roomID string
 		var lastErr error
-		for attempt := 0; attempt < 5; attempt++ {
+		for attempt := 0; attempt < 4; attempt++ {
 			roomID, lastErr = createRoom(t.ctx, t.currentCookies(), i)
 			if lastErr == nil || errors.Is(lastErr, errStopped) {
 				break
 			}
 			if errors.Is(lastErr, errAuth) {
-				if !transport.DialHookInstalled() {
-					break
-				}
+				// A 403 from the edge is a throttle far more often than it is a bad cookie,
+				// and the throttle window is minutes long. Hammering it keeps the ban alive,
+				// so this attempt stops here; the node retries the key later, and the proxy
+				// rotation below moves the next attempt to another address.
 				transport.ReportDial(transport.WithDialHint(t.ctx, transport.DialHint{Subject: fmt.Sprintf("room-%d", i)}), lastErr)
+				break
 			}
 			wait := t.config.RoomCreatePause * time.Duration(1<<uint(attempt))
 			if wait > 15*time.Second {
 				wait = 15 * time.Second
 			}
-			utils.Debugf("[AVITO] room %d attempt %d failed: %v (wait %v)", i+1, attempt+1, lastErr, wait)
+			if wait > 5*time.Minute {
+				wait = 5 * time.Minute
+			}
+			log.Printf("[AVITO] room %d attempt %d failed: %v (wait %v)", i+1, attempt+1, lastErr, wait)
 			if !sleepCtx(t.ctx, jittered(wait)) {
 				return nil, errStopped
 			}
 		}
-		if errors.Is(lastErr, errAuth) || errors.Is(lastErr, errStopped) {
+		if errors.Is(lastErr, errStopped) {
 			return nil, lastErr
 		}
 		if roomID == "" {
-			utils.Debugf("[AVITO] room %d skipped: %v", i+1, lastErr)
-			continue
+			if len(ids) > 0 {
+				log.Printf("[AVITO] room %d failed (%v), continuing with the %d room(s) already open", i+1, lastErr, len(ids))
+				break
+			}
+			return nil, lastErr
 		}
 		ids = append(ids, roomID)
-		utils.Debugf("[AVITO] created room %d/%d: %s", i+1, total, short(roomID))
+		log.Printf("[AVITO] created room %d/%d: %s", i+1, total, short(roomID))
 		if i < total-1 {
 			if !sleepCtx(t.ctx, t.config.RoomCreatePause) {
 				return nil, errStopped

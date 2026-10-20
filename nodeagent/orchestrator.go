@@ -117,6 +117,9 @@ type Orchestrator struct {
 	lastSummaryAt    time.Time
 	warnedAt         map[string]time.Time
 
+	startMu      sync.Mutex
+	startRetryAt map[string]time.Time
+
 	warpMu sync.Mutex
 	warps  map[string]*warp.Tunnel
 
@@ -235,6 +238,11 @@ const workerStartStagger = 150 * time.Millisecond
 
 const maxWorkerStartsPerReconcile = 100
 
+// startRetryBackoff is how long a key waits after a failed start before it is tried again.
+// A provider that throttles this node answers every attempt with an error, and hammering
+// it keeps the block alive, so the wait has to outlast the provider's window.
+const startRetryBackoff = 5 * time.Minute
+
 type cookieProvider interface {
 	ProvideCookies(cookieStr string)
 }
@@ -328,8 +336,32 @@ func cookieFingerprint(jar string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func (o *Orchestrator) avitoCookiesFor(keyID string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// startBackoffActive reports whether a key that failed to start recently still has to wait.
+// A provider that is throttling this node answers every attempt with an error, and trying
+// again straight away only keeps the block alive, so a failed key waits a few minutes.
+func (o *Orchestrator) startBackoffActive(keyID string) bool {
+	o.startMu.Lock()
+	defer o.startMu.Unlock()
+	until, ok := o.startRetryAt[keyID]
+	return ok && time.Now().Before(until)
+}
+
+func (o *Orchestrator) noteStartFailure(keyID string) {
+	o.startMu.Lock()
+	defer o.startMu.Unlock()
+	if o.startRetryAt == nil {
+		o.startRetryAt = make(map[string]time.Time)
+	}
+	o.startRetryAt[keyID] = time.Now().Add(startRetryBackoff)
+}
+
+func (o *Orchestrator) clearStartFailure(keyID string) {
+	o.startMu.Lock()
+	defer o.startMu.Unlock()
+	delete(o.startRetryAt, keyID)
+}
+
+func (o *Orchestrator) avitoCookiesFor(keyID string) string {	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	jars, err := o.client.ListKeyCookies(ctx)
 	if err != nil {
@@ -412,6 +444,9 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
+		if o.startBackoffActive(id) {
+			continue
+		}
 		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" && k.Transport != "mts" && k.Transport != "telemost" && k.Transport != "cupsonline" && k.Transport != "avito" {
 			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline/avito transports today", id)
 			continue
@@ -443,14 +478,20 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 
 		w, err := o.startWorker(k)
 		if err != nil {
+			o.noteStartFailure(k.ID)
 			// Port-range exhaustion is logged unconditionally (not gated behind --debug) since it otherwise fails silently, the same way, every poll cycle.
 			if o.cfg.ExitMode == nodetunnel.ExitModeRaw && strings.Contains(err.Error(), "no port range capacity") {
 				log.Printf("[NODEAGENT] key %s not started: %v - this node has reached its concurrent-key ceiling (raise it with --port-range-size, or run another node)", k.ID, err)
 			} else {
+				// A key that cannot start is the one thing an operator needs to see: without
+				// this line a blocked provider is indistinguishable from a key that is simply
+				// still waiting, and the panel shows an empty document for good.
+				o.warnThrottled("start-"+k.ID, "[NODEAGENT] key %s (%s) not started: %v", k.ID, k.Transport, err)
 				utils.Debugf("[NODEAGENT] failed to start worker for key %s: %v", k.ID, err)
 			}
 			continue
 		}
+		o.clearStartFailure(k.ID)
 		log.Printf("[NODEAGENT] key %s (%s): worker started", k.ID, k.Transport)
 
 		o.mu.Lock()
