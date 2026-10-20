@@ -148,7 +148,7 @@ func (a *App) handleNodeRoomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	k, err := a.Store.GetKeyByID(r.Context(), r.PathValue("id"))
+	k, err := a.Store.GetKeyByID(r.Context(), r.PathValue("keyID"))
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "key not found")
 		return
