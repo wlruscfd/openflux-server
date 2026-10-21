@@ -2,7 +2,9 @@ package nodeagent
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"sort"
 	"os"
 	"strings"
 	"time"
@@ -67,17 +69,27 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 		return
 	}
 	alive := 0
+	byCarrier := map[string]int{}
+	carrierKeys := map[string]int{}
+	lastError := ""
 	// A key is checked once per carrier it serves, and the carriers reach different
 	// services, so the same key can pass one and fail the next. It is one key, and it is
 	// worth keeping if it reaches any of the services it is meant to reach.
 	byKey := make(map[string]RemoteProxyKeyState, len(states))
 	order := make([]string, 0, len(states))
 	for _, s := range states {
+		carrierKeys[s.Carrier]++
 		state := "failed"
+		if s.OK {
+			state = "ok"
+		}
 		latency := int(s.Latency / time.Millisecond)
 		entry := RemoteProxyKeyState{ID: s.ID, State: state, LatencyMS: &latency}
 		if !s.OK {
 			entry.Error = s.Error
+			if lastError == "" {
+				lastError = s.Error
+			}
 		}
 		prev, seen := byKey[s.ID]
 		if !seen {
@@ -106,7 +118,18 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 		}
 		report = append(report, entry)
 	}
-	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider", alive, len(report))
+	for _, s := range states {
+		if s.OK {
+			byCarrier[s.Carrier]++
+		}
+	}
+	parts := make([]string, 0, len(carrierKeys))
+	for carrier, n := range carrierKeys {
+		parts = append(parts, fmt.Sprintf("%s=%d/%d", carrier, byCarrier[carrier], n))
+	}
+	sort.Strings(parts)
+	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider (%s); last failure: %s",
+		alive, len(report), strings.Join(parts, " "), lastError)
 
 	reportCtx, reportCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer reportCancel()

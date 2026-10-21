@@ -129,11 +129,13 @@ func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
 	out := make([]KeyState, 0, 64)
 	for carrierType := range groups {
 		hosts := carrierHostsOf(carrierType)
-		if len(hosts) == 0 {
-			continue
-		}
 		pool := m.router.Pool(carrierType)
 		if pool == nil {
+			continue
+		}
+		if len(hosts) == 0 {
+			out = append(out, KeyState{ID: "-", Carrier: carrierType, Error: "no service host for this carrier",
+				CheckedAt: time.Now()})
 			continue
 		}
 		// Only the materialized keys are checked: they are the ones with a listener, and a
