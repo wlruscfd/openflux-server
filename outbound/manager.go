@@ -13,6 +13,7 @@ import (
 type sidecarRunner interface {
 	Apply(keys []Key) error
 	DialerFor(keyID string) Dialer
+	Settling() bool
 	Stop()
 }
 
@@ -37,6 +38,10 @@ func NewManager(opts SidecarOptions) *Manager {
 }
 
 func (m *Manager) Router() *Router { return m.router }
+
+// Settling reports whether the proxy was rebuilt so recently that a check would
+// fail against listeners that are not up yet.
+func (m *Manager) Settling() bool { return m.sidecar.Settling() }
 
 func (m *Manager) LoadCarrierHosts() { m.router.LoadCarrierHosts() }
 

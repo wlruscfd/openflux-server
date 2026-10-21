@@ -64,16 +64,32 @@ func (o SidecarOptions) withDefaults() SidecarOptions {
 type Sidecar struct {
 	opts SidecarOptions
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	keys    []Key
-	dialers map[string]Dialer
-	finger  string
-	stopped bool
+	mu        sync.Mutex
+	cmd       *exec.Cmd
+	keys      []Key
+	dialers   map[string]Dialer
+	finger    string
+	stopped   bool
+	startedAt time.Time
 }
 
 func NewSidecar(opts SidecarOptions) *Sidecar {
 	return &Sidecar{opts: opts.withDefaults(), dialers: map[string]Dialer{}}
+}
+
+// Settling reports whether the sidecar was started so recently that its listeners
+// may not answer yet.
+//
+// The sidecar is rebuilt whenever the set of keys changes, and a check that runs
+// against a half-started sidecar fails every key at once. Skipping the check until
+// the listeners are up keeps one rebuild from condemning the whole set.
+func (s *Sidecar) Settling() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startedAt.IsZero() {
+		return false
+	}
+	return time.Since(s.startedAt) < 15*time.Second
 }
 
 func (s *Sidecar) DialerFor(keyID string) Dialer {
@@ -185,6 +201,7 @@ func (s *Sidecar) Apply(keys []Key) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start sing-box: %w", err)
 	}
+	s.startedAt = time.Now()
 	s.writePIDFileLocked(cmd.Process.Pid)
 	if err := waitPorts(byID, s.opts.StartWait); err != nil {
 		_ = cmd.Process.Kill()

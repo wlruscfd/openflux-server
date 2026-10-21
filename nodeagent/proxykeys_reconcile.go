@@ -20,6 +20,10 @@ const proxyKeyPollInterval = 30 * time.Second
 // working one if it knows which ones work.
 const proxyKeyProbeInterval = 2 * time.Minute
 
+// proxyKeyFailuresBeforeBroken is how many checks in a row a key has to fail before it is
+// written down as broken. One failure is often the moment and not the key.
+const proxyKeyFailuresBeforeBroken = 3
+
 func singboxOptionsFromEnv() outbound.SidecarOptions {
 	opts := outbound.SidecarOptions{LogLevel: "error"}
 	if v := os.Getenv("OPENFLUX_SINGBOX"); v != "" {
@@ -55,11 +59,25 @@ func (o *Orchestrator) proxyLoop(ctx context.Context) {
 // The check is per key, not per carrier: a list of a thousand public proxies is mostly dead,
 // and the pool balances over what it knows. A key that opens a connection to the provider
 // earns a good score, one that does not goes into a cooldown and is left alone.
+func (o *Orchestrator) proxyKeyFailuresLocked() map[string]int {
+	o.proxyKeyFailuresMu.Lock()
+	defer o.proxyKeyFailuresMu.Unlock()
+	if o.proxyKeyFailures == nil {
+		o.proxyKeyFailures = make(map[string]int)
+	}
+	return o.proxyKeyFailures
+}
+
 func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 	o.proxyMu.Lock()
 	p := o.proxy
 	o.proxyMu.Unlock()
 	if p == nil {
+		return
+	}
+	if p.Settling() {
+		// The sidecar was just rebuilt: its listeners are not up yet, and a check now would
+		// fail every key at once and take the carrier's working set with it.
 		return
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, proxyKeyProbeInterval)
@@ -102,6 +120,28 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 			byKey[s.ID] = entry
 		}
 	}
+	// A key that was working is only written down as broken after it failed a few checks
+	// in a row. One failed check is often the network, not the key: a proxy that was busy
+	// for a moment, a sidecar that was rebuilt, a provider that refused once. Demoting a
+	// working key on the first failure is what makes a carrier work for a while and then
+	// stop, because the key it depended on is dropped and never comes back.
+	//
+	// A key that has not failed enough times yet is not reported at all: the panel keeps
+	// the state it had, which is the point of not throwing it away.
+	fails := o.proxyKeyFailuresLocked()
+	for id, entry := range byKey {
+		if entry.State == "ok" {
+			delete(fails, id)
+			continue
+		}
+		// A refused connection to the local listener is not the key failing: the sidecar
+		// was rebuilt and the key was not tested at all. Counting it would condemn a
+		// working key every time the rotation rebuilt the sidecar.
+		if strings.Contains(entry.Error, "connection refused") {
+			continue
+		}
+		fails[id]++
+	}
 	report := make([]RemoteProxyKeyState, 0, len(order))
 	for _, id := range order {
 		entry := byKey[id]
@@ -110,9 +150,9 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 			report = append(report, entry)
 			continue
 		}
-		// A refused connection to the local listener is not the key failing: the sidecar
-		// was rebuilt and the key was not tested at all. Writing that down would demote
-		// a working key every time the rotation rebuilt the sidecar.
+		if fails[id] < proxyKeyFailuresBeforeBroken {
+			continue
+		}
 		if strings.Contains(entry.Error, "connection refused") {
 			continue
 		}

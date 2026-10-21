@@ -120,6 +120,9 @@ type Orchestrator struct {
 	startMu      sync.Mutex
 	startRetryAt map[string]time.Time
 
+	proxyKeyFailuresMu sync.Mutex
+	proxyKeyFailures   map[string]int
+
 	warpMu sync.Mutex
 	warps  map[string]*warp.Tunnel
 

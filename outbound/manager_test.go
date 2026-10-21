@@ -17,6 +17,13 @@ type fakeSidecar struct {
 	applied  []Key
 	stopped  bool
 	applyErr error
+	settling bool
+}
+
+func (f *fakeSidecar) Settling() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.settling
 }
 
 func (f *fakeSidecar) Apply(keys []Key) error {
