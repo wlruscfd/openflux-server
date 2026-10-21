@@ -156,12 +156,17 @@ func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
 				probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 				took, err := pool.ProbeKey(probeCtx, k.ID, "tcp", host+":443")
 				cancel()
-				if err == nil {
-					ok = true
-					latency = took
+				if err != nil {
+					// Every host of the carrier has to answer. A key that reaches the
+					// document but cannot open the channel is not a key this carrier
+					// can work with, and the channel is where the traffic goes.
+					ok = false
+					latency = 0
+					lastErr = err
 					break
 				}
-				lastErr = err
+				ok = true
+				latency = took
 			}
 			state := KeyState{ID: k.ID, Carrier: carrierType, OK: ok, Latency: latency, CheckedAt: time.Now()}
 			if !ok && lastErr != nil {
