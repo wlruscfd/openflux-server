@@ -137,8 +137,15 @@ func createRoom(ctx context.Context, cookies string, slot int) (string, error) {
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("%w: status %d", errAuth, resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		// A 403 here is the provider refusing the address, not the cookies: the same
+		// request without any cookies is refused the same way. Saying "the cookies were
+		// rejected" sends the operator to paste new cookies for a cookie that was never
+		// the problem.
+		return "", fmt.Errorf("%w: the provider refused this address (403); the cookies may be fine", errAuth)
 	}
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("POST room status %d: %s", resp.StatusCode, truncate(body, 200))
