@@ -67,14 +67,14 @@ func (s *Store) CreateProxyKeys(ctx context.Context, ps []ProxyKey) (int, error)
 	values := make([]string, 0, len(ps))
 	args := make([]any, 0, len(ps)*7)
 	for i, p := range ps {
-		base := i*7 + 1
+		base := i*8 + 1
 		values = append(values, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7))
 		args = append(args, p.Name, p.LinkEnc, p.Kind, p.Server, p.Port, p.Priority, p.Enabled, p.LinkHash)
 	}
 	q := `INSERT INTO proxy_keys (name, link_enc, kind, server, port, priority, enabled, link_hash)
 	      VALUES ` + joinRows(values) + `
-	      ON CONFLICT (link_hash) DO UPDATE SET
+	      ON CONFLICT (link_hash) WHERE link_hash IS NOT NULL DO UPDATE SET
 	        priority = GREATEST(proxy_keys.priority, EXCLUDED.priority),
 	        updated_at = now()
 	      RETURNING id`

@@ -235,7 +235,7 @@ func (a *App) handleCreateProxyKey(w http.ResponseWriter, r *http.Request) {
 // the handful that actually work, so the panel may keep far more than that: a public key list
 // is mostly dead links, and the node finds the live ones by probing. What the panel stores is
 // the candidate pool, not the working set.
-const maxProxyKeys = 4096
+const maxProxyKeys = 32768
 
 // carrierRoom counts how many of the stored keys already serve any of these carriers.
 func carrierRoom(existing []store.ProxyKey, carriers []string) int {
@@ -332,6 +332,9 @@ func (a *App) handleBulkImportProxyKeys(w http.ResponseWriter, r *http.Request) 
 		}
 		if _, err := a.Store.CreateProxyKeys(r.Context(), batch); err != nil {
 			rejected += len(batch)
+			if len(firstErrors) < 5 {
+				firstErrors = append(firstErrors, err.Error())
+			}
 		} else {
 			created += len(batch)
 		}
