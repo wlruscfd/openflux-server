@@ -169,7 +169,7 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 	}
 	sort.Strings(parts)
 	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider (%s); last failure: %s",
-		alive, len(report), strings.Join(parts, " "), lastError)
+		alive, len(order), strings.Join(parts, " "), lastError)
 
 	reportCtx, reportCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer reportCancel()
