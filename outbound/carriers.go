@@ -17,10 +17,10 @@ var carrierHostTable = map[string][]string{
 		"my.mts-link.ru", "wsboard.mts-link.ru", "wsboard2.mts-link.ru", "mts-link.ru",
 	},
 	"cupsonline": {
-		"cups.online", "interview.cups.online",
+		"interview.cups.online",
 	},
 	"avito": {
-		"code.avito.ru", "avito.ru",
+		"code.avito.ru",
 	},
 	"oneme": {
 		"ws-api.oneme.ru", "oneme.ru",
