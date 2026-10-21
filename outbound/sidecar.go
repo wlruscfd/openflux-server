@@ -199,13 +199,20 @@ func (s *Sidecar) Apply(keys []Key) error {
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = processAttributes()
 	if err := cmd.Start(); err != nil {
+		utils.Infof("[OUTBOUND] sing-box did not start: %v", err)
 		return fmt.Errorf("start sing-box: %w", err)
 	}
 	s.startedAt = time.Now()
 	s.writePIDFileLocked(cmd.Process.Pid)
-	if err := waitPorts(byID, s.opts.StartWait); err != nil {
+	// sing-box opens one listener per key, and the listeners are checked one after another.
+	// A fixed wait is not enough for a few hundred keys: the process is killed while it is
+	// still coming up, and the node is left with no proxy at all and no way to see why.
+	wait := s.opts.StartWait + time.Duration(len(byID))*150*time.Millisecond
+	if err := waitPorts(byID, wait); err != nil {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
+		s.clearPIDFileLocked()
+		utils.Infof("[OUTBOUND] sing-box did not come up with %d keys: %v", len(byID), err)
 		return err
 	}
 	s.cmd, s.keys, s.dialers, s.finger = cmd, keys, dialers, fp

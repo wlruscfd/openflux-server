@@ -211,6 +211,9 @@ func (o *Orchestrator) reconcileProxyKeys(ctx context.Context) {
 		o.proxy = outbound.NewManager(singboxOptionsFromEnv())
 	}
 	if err := o.proxy.Apply(groups); err != nil {
+		// A proxy that did not come up leaves the carriers dialing straight out, and the
+		// provider that blocks this node's address is exactly why the proxy is there.
+		utils.Infof("[NODEAGENT] the proxy pools did not come up: %v", err)
 		utils.Debugf("[NODEAGENT] could not bring the proxy pools up: %v", err)
 		return
 	}
