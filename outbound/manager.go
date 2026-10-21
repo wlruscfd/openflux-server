@@ -20,7 +20,11 @@ type sidecarRunner interface {
 // MaxKeysPerCarrier bounds one pool. A node hands every carrier connection to one local port per key,
 // so the cap is really a cap on how much a misconfigured panel can cost a node: sing-box opens one
 // listener and one outbound per key, and a public key list has thousands of dead entries in it.
-const MaxKeysPerCarrier = 64
+//
+// The pool can only pick a working key if it has more than a handful to choose from: most of a
+// public list is dead, so a small pool is mostly dead keys and the carrier has nothing to dial
+// with. The panel hands out this many per carrier, and the node materializes them.
+const MaxKeysPerCarrier = 256
 
 func MaxKeysTotal() int { return MaxKeysPerCarrier * 8 }
 
@@ -152,14 +156,20 @@ func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
 			ok := false
 			var latency time.Duration
 			var lastErr error
-			for _, host := range hosts {
+			// Every host of the carrier has to answer. A key that reaches the
+			// document but cannot open the channel is not a key this carrier
+			// can work with, and the channel is where the traffic goes. The
+			// first two hosts are the service and its channel; the rest are
+			// spares, and a key that cannot reach a spare is still usable.
+			needed := len(hosts)
+			if needed > 2 {
+				needed = 2
+			}
+			for _, host := range hosts[:needed] {
 				probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 				took, err := pool.ProbeKey(probeCtx, k.ID, "tcp", host+":443")
 				cancel()
 				if err != nil {
-					// Every host of the carrier has to answer. A key that reaches the
-					// document but cannot open the channel is not a key this carrier
-					// can work with, and the channel is where the traffic goes.
 					ok = false
 					latency = 0
 					lastErr = err
