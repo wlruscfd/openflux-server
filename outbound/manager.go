@@ -24,8 +24,12 @@ type sidecarRunner interface {
 // The pool can only pick a working key if it has more than a handful to choose from: most of a
 // public list is dead, so a small pool is mostly dead keys and the carrier has nothing to dial
 // with. The panel hands out this many per carrier, and the node materializes them.
-const MaxKeysPerCarrier = 256
+const MaxKeysPerCarrier = 128
 
+// MaxKeysTotal is how many keys the node materializes altogether. Every one of them needs a local
+// port, so the total has to fit the sidecar's port range: past that the sidecar does not come up
+// at all, and every carrier falls back to the node's own address, which is the address the
+// provider blocks.
 func MaxKeysTotal() int { return MaxKeysPerCarrier * 8 }
 
 type Manager struct {

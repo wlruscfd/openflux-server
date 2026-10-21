@@ -47,7 +47,10 @@ func (o SidecarOptions) withDefaults() SidecarOptions {
 		o.PortLow = 41000
 	}
 	if o.PortHigh == 0 {
-		o.PortHigh = 41999
+		// The node opens one local listener per key it uses, so the range has to hold the
+		// whole set the node materializes. It was a thousand ports, which a handful of
+		// carriers with a few hundred keys each no longer fits in.
+		o.PortHigh = 42999
 	}
 	if o.LogLevel == "" {
 		o.LogLevel = "error"
@@ -146,8 +149,13 @@ func (s *Sidecar) Apply(keys []Key) error {
 	if fp == s.finger && s.cmd != nil {
 		return nil
 	}
+	// The old process is stopped before the ports are counted: it is holding the very ports
+	// the new one has to bind, and while it runs they look taken, so a set of keys that
+	// fits the range does not look like it fits.
+	s.stopProcessLocked()
 	ports, err := s.allocatePorts(len(keys))
 	if err != nil {
+		utils.Infof("[OUTBOUND] sing-box got no ports for %d keys: %v", len(keys), err)
 		return err
 	}
 	byID := make(map[string]int, len(keys))
