@@ -69,7 +69,7 @@ func TestRouterUsesTheHintedSubjectAndFeedbackReachesThePool(t *testing.T) {
 	direct, seen := recordingDirect(t)
 
 	ctx := transport.WithDialHint(context.Background(), transport.DialHint{Subject: "room-3", Spread: true})
-	conn, err := r.Dial(ctx, "tcp", "cups.online:443", direct)
+	conn, err := r.Dial(ctx, "tcp", "interview.cups.online:443", direct)
 	if err != nil {
 		t.Fatal(err)
 	}
