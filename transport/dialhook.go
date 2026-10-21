@@ -58,8 +58,32 @@ func ReportDial(ctx context.Context, err error) {
 	}
 }
 
-func SetDialHook(h DialHook) {
-	dialHookMu.Lock()
+// RegisterCarrierHost tells the dialer that a host belongs to a carrier.
+//
+// A transport learns some of its hosts while it runs: a board says which host
+// serves its documents, and that host is not in the table anyone wrote down.
+// Without this the request leaves straight from the node's own address, which
+// is the address the provider blocks.
+func RegisterCarrierHost(carrierType, host string) {
+	hostRegistrarMu.RLock()
+	fn := hostRegistrar
+	hostRegistrarMu.RUnlock()
+	if fn != nil {
+		fn(carrierType, host)
+	}
+}
+
+var hostRegistrarMu sync.RWMutex
+var hostRegistrar func(carrierType, host string)
+
+// SetHostRegistrar installs the function that remembers a host for a carrier.
+func SetHostRegistrar(fn func(carrierType, host string)) {
+	hostRegistrarMu.Lock()
+	hostRegistrar = fn
+	hostRegistrarMu.Unlock()
+}
+
+func SetDialHook(h DialHook) {	dialHookMu.Lock()
 	defer dialHookMu.Unlock()
 	dialHook = h
 }

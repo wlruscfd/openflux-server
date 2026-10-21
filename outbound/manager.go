@@ -43,12 +43,14 @@ func (m *Manager) LoadCarrierHosts() { m.router.LoadCarrierHosts() }
 func (m *Manager) Install() {
 	transport.SetDialHook(m.router.Hook())
 	transport.SetDialFeedback(m.router.HintFeedback())
+	transport.SetHostRegistrar(m.router.RegisterHost)
 	utils.SafeGo("outbound.probe", m.probeLoop)
 }
 
 func (m *Manager) Uninstall() {
 	transport.SetDialHook(nil)
 	transport.SetDialFeedback(nil)
+	transport.SetHostRegistrar(nil)
 	m.sidecar.Stop()
 }
 

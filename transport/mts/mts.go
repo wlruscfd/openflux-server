@@ -513,6 +513,10 @@ func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 	if info.appDomain == "" {
 		info.appDomain = "my.mts-link.ru/boards"
 	}
+	// The board names the host that serves its documents, and it is not the host the
+	// share link points at. Registering it keeps the request on the carrier's route
+	// instead of leaving straight from the node's own address.
+	transport.RegisterCarrierHost("mts", info.appDomain)
 	if info.wsDomain == "" {
 		info.wsDomain = mtsReserveWS
 	}
