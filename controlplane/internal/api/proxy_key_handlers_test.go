@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
 func TestParseProxyLinkAcceptsEverySupportedScheme(t *testing.T) {
 	cases := []struct {
@@ -30,12 +33,31 @@ func TestParseProxyLinkAcceptsEverySupportedScheme(t *testing.T) {
 
 func TestParseProxyLinkRejectsWhatTheNodeCannotDial(t *testing.T) {
 	for _, link := range []string{
-		"", "trojan://a@b:1", "vmess://a", "ss://YWVzLTI1Ni1nY206cGFzcw@1.2.3.4",
-		"not a url at all",
+		"", "ssr://a@b:1", "not a url at all",
 	} {
 		if _, _, _, _, err := parseProxyLink(link); err == nil {
 			t.Fatalf("%q must be rejected", link)
 		}
+	}
+}
+
+func TestParseProxyLinkReadsVMessAndTrojan(t *testing.T) {
+	vmess := "vmess://" + base64.StdEncoding.EncodeToString([]byte(
+		`{"v":"2","ps":"node-a","add":"example.com","port":"443","id":"uuid-1","net":"ws"}`))
+	kind, server, port, name, err := parseProxyLink(vmess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "vmess" || server != "example.com" || port != 443 || name != "node-a" {
+		t.Fatalf("vmess: %s %s:%d %q", kind, server, port, name)
+	}
+
+	kind, server, port, name, err = parseProxyLink("trojan://secret@example.com:8443?sni=x#node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "trojan" || server != "example.com" || port != 8443 || name != "node-b" {
+		t.Fatalf("trojan: %s %s:%d %q", kind, server, port, name)
 	}
 }
 

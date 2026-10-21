@@ -1,6 +1,9 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -53,8 +56,16 @@ func parseProxyLink(link string) (kind, server string, port int, name string, er
 	if link == "" {
 		return "", "", 0, "", fmt.Errorf("empty link")
 	}
+	if strings.HasPrefix(strings.ToLower(link), "vmess://") {
+		return parseVMessLink(link)
+	}
 	u, err := url.Parse(link)
 	if err != nil {
+		// The SIP002 form of a shadowsocks link carries characters a URL does not allow, so
+		// the parts have to be taken apart by hand.
+		if strings.HasPrefix(strings.ToLower(link), "ss://") {
+			return parseShadowsocksSIP002(link)
+		}
 		return "", "", 0, "", fmt.Errorf("link is not a URL")
 	}
 	switch u.Scheme {
@@ -64,8 +75,10 @@ func parseProxyLink(link string) (kind, server string, port int, name string, er
 		kind = "vless"
 	case "hysteria2", "hy2":
 		kind = "hysteria2"
+	case "trojan":
+		kind = "trojan"
 	default:
-		return "", "", 0, "", fmt.Errorf("scheme %q is not supported, use ss://, vless:// or hysteria2://", u.Scheme)
+		return "", "", 0, "", fmt.Errorf("scheme %q is not supported, use ss://, vless://, vmess://, trojan:// or hysteria2://", u.Scheme)
 	}
 	server = u.Hostname()
 	port, err = strconv.Atoi(u.Port())
@@ -80,6 +93,66 @@ func parseProxyLink(link string) (kind, server string, port int, name string, er
 		return "", "", 0, "", fmt.Errorf("bad server address")
 	}
 	return kind, server, port, name, nil
+}
+
+// parseVMessLink reads the base64 JSON a vmess link carries. Public lists are
+// mostly vmess, so dropping them loses more than half of the usable keys.
+func parseVMessLink(link string) (kind, server string, port int, name string, err error) {
+	payload := strings.TrimPrefix(link, "vmess://")
+	payload = strings.SplitN(payload, "#", 2)[0]
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(payload, "="))
+	if err != nil {
+		raw, err = base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return "", "", 0, "", fmt.Errorf("vmess link is not base64")
+		}
+	}
+	var obj struct {
+		PS   string          `json:"ps"`
+		Add  string          `json:"add"`
+		Port json.RawMessage `json:"port"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", "", 0, "", fmt.Errorf("vmess link is not json")
+	}
+	if obj.Add == "" {
+		return "", "", 0, "", fmt.Errorf("vmess link without a server address")
+	}
+	portText := strings.Trim(string(obj.Port), `"`)
+	port, err = strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", "", 0, "", fmt.Errorf("vmess link with a bad port")
+	}
+	name = obj.PS
+	return "vmess", obj.Add, port, name, nil
+}
+
+// parseShadowsocksSIP002 takes a shadowsocks link apart by hand: its
+// credentials carry characters the URL syntax does not allow.
+func parseShadowsocksSIP002(link string) (kind, server string, port int, name string, err error) {
+	payload := strings.TrimPrefix(link, "ss://")
+	name = ""
+	if i := strings.IndexByte(payload, '#'); i >= 0 {
+		name = payload[i+1:]
+		payload = payload[:i]
+	}
+	if i := strings.IndexByte(payload, '?'); i >= 0 {
+		payload = payload[:i]
+	}
+	at := strings.LastIndex(payload, "@")
+	if at < 0 {
+		return "", "", 0, "", fmt.Errorf("shadowsocks link without a host")
+	}
+	hostport := payload[at+1:]
+	host, portText, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return "", "", 0, "", fmt.Errorf("shadowsocks link without a port")
+	}
+	port, err = strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", "", 0, "", fmt.Errorf("shadowsocks link with a bad port")
+	}
+	return "shadowsocks", host, port, name, nil
 }
 
 func cleanCarriers(in []string) ([]string, error) {
@@ -156,10 +229,31 @@ func (a *App) handleCreateProxyKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, proxyKeyDTO(p))
 }
 
-// maxProxyKeys is how many keys one carrier may carry. A node opens a local listener and an
-// outbound per key, and the public key lists people paste in run to thousands of entries, most of
-// them dead long before they are ever dialled.
-const maxProxyKeys = 64
+// maxProxyKeys is how many keys one carrier may hold.
+//
+// The node opens a local listener and an outbound per key it uses, but it only materializes
+// the handful that actually work, so the panel may keep far more than that: a public key list
+// is mostly dead links, and the node finds the live ones by probing. What the panel stores is
+// the candidate pool, not the working set.
+const maxProxyKeys = 4096
+
+// carrierRoom counts how many of the stored keys already serve any of these carriers.
+func carrierRoom(existing []store.ProxyKey, carriers []string) int {
+	wanted := map[string]bool{}
+	for _, c := range carriers {
+		wanted[c] = true
+	}
+	room := 0
+	for _, p := range existing {
+		for _, c := range p.Carriers {
+			if wanted[c] {
+				room++
+				break
+			}
+		}
+	}
+	return room
+}
 
 // checkCarrierRoom keeps a carrier from collecting more keys than a node can carry. excludeID is the
 // key being edited, so replacing a key never trips the limit against itself.
@@ -195,8 +289,8 @@ type bulkImportProxyKeysRequest struct {
 }
 
 // maxBulkImport bounds one paste. A public key list runs to thousands of entries and almost all of
-// them are dead; importing more than a carrier can hold would only crowd out the few that work.
-const maxBulkImport = maxProxyKeys
+// them are dead; the panel keeps them all as candidates and the node picks the live ones.
+const maxBulkImport = 8192
 
 // handleBulkImportProxyKeys takes a whole pasted list at once, one link per line, and reports what it
 // stored and what it had to drop. Imports are partial on purpose: one malformed line does not throw
@@ -221,16 +315,39 @@ func (a *App) handleBulkImportProxyKeys(w http.ResponseWriter, r *http.Request) 
 	rejected := 0
 	malformed := 0
 	var firstErrors []string
+
+	// The room is checked once, not per line: the check lists every stored key, and a public
+	// list is thousands of lines long.
+	existing, err := a.Store.ListProxyKeys(r.Context())
+	if err != nil {
+		writeInternalError(w, r, "list proxy keys failed", err)
+		return
+	}
+	room := carrierRoom(existing, carriers)
+
+	batch := make([]store.ProxyKey, 0, bulkImportBatch)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if _, err := a.Store.CreateProxyKeys(r.Context(), batch); err != nil {
+			rejected += len(batch)
+		} else {
+			created += len(batch)
+		}
+		batch = batch[:0]
+	}
+
 	for _, raw := range lines {
 		link := strings.TrimSpace(raw)
 		if link == "" || strings.HasPrefix(link, "#") {
 			continue
 		}
-		if created >= maxBulkImport {
+		if created+len(batch) >= maxBulkImport {
 			rejected++
 			continue
 		}
-		if err := a.checkCarrierRoom(w, r, carriers, ""); err != nil {
+		if room >= maxProxyKeys {
 			writeJSON(w, http.StatusOK, bulkImportResponse{Created: created, Rejected: rejected,
 				Malformed: malformed, Errors: firstErrors, Full: true})
 			return
@@ -251,17 +368,35 @@ func (a *App) handleBulkImportProxyKeys(w http.ResponseWriter, r *http.Request) 
 			}
 			continue
 		}
-		if _, err := a.Store.CreateProxyKey(r.Context(), store.ProxyKey{
+		batch = append(batch, store.ProxyKey{
 			Name: name, LinkEnc: enc, Kind: kind, Server: server, Port: port,
 			Priority: priority, Enabled: true, Carriers: carriers,
-		}); err != nil {
-			rejected++
-			continue
+			LinkHash: linkHash(link),
+		})
+		if len(batch) >= bulkImportBatch {
+			flush()
+			room += bulkImportBatch
 		}
-		created++
 	}
+	flush()
 	writeJSON(w, http.StatusOK, bulkImportResponse{Created: created, Rejected: rejected,
 		Malformed: malformed, Errors: firstErrors})
+}
+
+// bulkImportBatch is how many keys go to the database in one statement. A public list is
+// thousands of links long and one insert per link turns the import into tens of thousands
+// of round trips.
+const bulkImportBatch = 500
+
+// nodeProxyKeyLimit is how many keys per carrier a node is handed. The panel keeps the whole
+// list as candidates; the node tries the ones that look alive first.
+const nodeProxyKeyLimit = 256
+
+// linkHash is what makes an import idempotent: the link itself is sealed, so two copies of
+// the same link cannot be compared, but their hashes can.
+func linkHash(link string) []byte {
+	sum := sha256.Sum256([]byte(link))
+	return sum[:]
 }
 
 type bulkImportResponse struct {
@@ -382,7 +517,7 @@ func (a *App) handleDeleteProxyKey(w http.ResponseWriter, r *http.Request) {
 // node-authenticated request reaches it. Kept off the key listing so the hot reconcile path is unchanged.
 func (a *App) handleNodeListProxyKeys(w http.ResponseWriter, r *http.Request) {
 	n := nodeFromContext(r.Context())
-	keys, err := a.Store.ListProxyKeysForNode(r.Context())
+	keys, err := a.Store.ListProxyKeysForNode(r.Context(), nodeProxyKeyLimit)
 	if err != nil {
 		writeInternalError(w, r, "list proxy keys failed", err)
 		return

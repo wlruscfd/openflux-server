@@ -28,6 +28,7 @@ type Manager struct {
 	sidecar sidecarRunner
 
 	mu      sync.Mutex
+	groups  map[string][]Key
 	probeIn time.Duration
 }
 
@@ -59,6 +60,7 @@ func (m *Manager) Stop() {
 
 func (m *Manager) Apply(groups map[string][]Key) error {
 	m.mu.Lock()
+	m.groups = groups
 	defer m.mu.Unlock()
 	carriers := make([]string, 0, len(groups))
 	for carrierType := range groups {
@@ -100,6 +102,63 @@ func (m *Manager) Apply(groups map[string][]Key) error {
 		pool.SetKeys(specs)
 	}
 	return nil
+}
+
+// KeyState is what the node found when it last checked one key against the services that
+// key is meant to reach. The panel keeps it, so the list can be sorted by what actually
+// works instead of by the order the links were pasted in.
+type KeyState struct {
+	ID       string        `json:"id"`
+	Carrier  string        `json:"carrier"`
+	OK       bool          `json:"ok"`
+	Latency  time.Duration `json:"latency"`
+	Error    string        `json:"error,omitempty"`
+	CheckedAt time.Time    `json:"checked_at"`
+}
+
+// ProbeAll checks every key of every carrier against the hosts that carrier has to reach.
+//
+// A public proxy list is mostly dead, so a key is only worth keeping if it opens a
+// connection to the provider. The check is per key and per host, because a key that reaches
+// one service is not necessarily the one that reaches the other.
+func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
+	m.mu.Lock()
+	groups := m.groups
+	m.mu.Unlock()
+
+	out := make([]KeyState, 0, 64)
+	for carrierType, keys := range groups {
+		hosts := carrierHostsOf(carrierType)
+		if len(hosts) == 0 {
+			continue
+		}
+		pool := m.router.Pool(carrierType)
+		if pool == nil {
+			continue
+		}
+		for _, k := range keys {
+			ok := false
+			var latency time.Duration
+			var lastErr error
+			for _, host := range hosts {
+				probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+				took, err := pool.ProbeKey(probeCtx, k.ID, "tcp", host+":443")
+				cancel()
+				if err == nil {
+					ok = true
+					latency = took
+					break
+				}
+				lastErr = err
+			}
+			state := KeyState{ID: k.ID, Carrier: carrierType, OK: ok, Latency: latency, CheckedAt: time.Now()}
+			if !ok && lastErr != nil {
+				state.Error = lastErr.Error()
+			}
+			out = append(out, state)
+		}
+	}
+	return out
 }
 
 func (m *Manager) probeLoop() {

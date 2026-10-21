@@ -483,6 +483,57 @@ func singboxOutbound(k Key, tag string) (json.RawMessage, error) {
 			"server": k.Server, "server_port": k.Port,
 			"password": k.Password, "tls": tls,
 		})
+	case KindVMess:
+		entry := map[string]any{
+			"type": "vmess", "tag": tag,
+			"server": k.Server, "server_port": k.Port,
+			"uuid": k.UUID, "alter_id": 0, "security": firstNonEmpty(k.Mode, "auto"),
+		}
+		if tr, ok := singboxTransport(k); ok {
+			entry["transport"] = tr
+		}
+		if k.NoTLS {
+			return json.Marshal(entry)
+		}
+		tls := map[string]any{"enabled": true}
+		if k.SNI != "" {
+			tls["server_name"] = k.SNI
+		}
+		if len(k.ALPN) > 0 {
+			tls["alpn"] = k.ALPN
+		}
+		if k.Insecure {
+			tls["insecure"] = true
+		}
+		if k.Fingerprint != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": k.Fingerprint}
+		}
+		entry["tls"] = tls
+		return json.Marshal(entry)
+	case KindTrojan:
+		entry := map[string]any{
+			"type": "trojan", "tag": tag,
+			"server": k.Server, "server_port": k.Port,
+			"password": k.Password,
+		}
+		if tr, ok := singboxTransport(k); ok {
+			entry["transport"] = tr
+		}
+		tls := map[string]any{"enabled": true}
+		if k.SNI != "" {
+			tls["server_name"] = k.SNI
+		}
+		if len(k.ALPN) > 0 {
+			tls["alpn"] = k.ALPN
+		}
+		if k.Insecure {
+			tls["insecure"] = true
+		}
+		if k.Fingerprint != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": k.Fingerprint}
+		}
+		entry["tls"] = tls
+		return json.Marshal(entry)
 	default:
 		return nil, fmt.Errorf("sing-box: unsupported key kind %q", k.Kind)
 	}

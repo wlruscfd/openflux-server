@@ -427,6 +427,33 @@ func (p *Pool) DialContext(ctx context.Context, subject, network, address string
 	return nil, fmt.Errorf("proxy %s: %w", st.label, err)
 }
 
+// ProbeKey checks one key against one address and records the outcome for that key.
+//
+// The pool's own probe answers a different question: it asks whether the carrier can reach
+// the provider at all, through whichever key it likes best. A list of a thousand public
+// proxies is mostly dead, and the panel has to know which ones are alive, so every key is
+// checked on its own and the result is kept with the key.
+func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (time.Duration, error) {
+	p.mu.Lock()
+	st := p.byID[keyID]
+	p.mu.Unlock()
+	if st == nil {
+		return 0, ErrNoProxy
+	}
+	started := time.Now()
+	conn, err := st.dial.DialContext(ctx, network, address)
+	st.dials.Add(1)
+	if err != nil {
+		st.failures.Add(1)
+		st.recordFailure(err, p.cfg.Cooldown)
+		return time.Since(started), err
+	}
+	conn.Close()
+	took := time.Since(started)
+	st.recordSuccess(took)
+	return took, nil
+}
+
 func (p *Pool) Probe(ctx context.Context, subject, network, address string) error {
 	p.mu.Lock()
 	var st *keyState

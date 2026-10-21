@@ -2,6 +2,7 @@ package nodeagent
 
 import (
 	"context"
+	"log"
 	"os"
 	"time"
 
@@ -10,6 +11,11 @@ import (
 )
 
 const proxyKeyPollInterval = 30 * time.Second
+
+// proxyKeyProbeInterval is how often every key is checked against the services its carrier
+// has to reach. A public proxy list is mostly dead links, and the pool can only pick a
+// working one if it knows which ones work.
+const proxyKeyProbeInterval = 2 * time.Minute
 
 func singboxOptionsFromEnv() outbound.SidecarOptions {
 	opts := outbound.SidecarOptions{LogLevel: "error"}
@@ -27,14 +33,45 @@ func singboxOptionsFromEnv() outbound.SidecarOptions {
 func (o *Orchestrator) proxyLoop(ctx context.Context) {
 	ticker := time.NewTicker(proxyKeyPollInterval)
 	defer ticker.Stop()
+	probe := time.NewTicker(proxyKeyProbeInterval)
+	defer probe.Stop()
 	for {
 		o.reconcileProxyKeys(ctx)
 		select {
 		case <-ctx.Done():
 			return
+		case <-probe.C:
+			o.probeProxyKeys(ctx)
 		case <-ticker.C:
 		}
 	}
+}
+
+// probeProxyKeys checks every key against the services its carrier has to reach.
+//
+// The check is per key, not per carrier: a list of a thousand public proxies is mostly dead,
+// and the pool balances over what it knows. A key that opens a connection to the provider
+// earns a good score, one that does not goes into a cooldown and is left alone.
+func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
+	o.proxyMu.Lock()
+	p := o.proxy
+	o.proxyMu.Unlock()
+	if p == nil {
+		return
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, proxyKeyProbeInterval)
+	defer cancel()
+	states := p.ProbeAll(probeCtx)
+	if len(states) == 0 {
+		return
+	}
+	alive := 0
+	for _, s := range states {
+		if s.OK {
+			alive++
+		}
+	}
+	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider", alive, len(states))
 }
 
 func (o *Orchestrator) reconcileProxyKeys(ctx context.Context) {
