@@ -25,6 +25,10 @@ type proxyKeyResponse struct {
 	Enabled   bool      `json:"enabled"`
 	Carriers  []string  `json:"carriers"`
 	CreatedAt time.Time `json:"created_at"`
+	State     string    `json:"state"`
+	StateCheckedAt *time.Time `json:"state_checked_at,omitempty"`
+	StateLatencyMS *int   `json:"state_latency_ms,omitempty"`
+	StateError string   `json:"state_error,omitempty"`
 }
 
 func proxyKeyDTO(p store.ProxyKey) proxyKeyResponse {
@@ -32,7 +36,65 @@ func proxyKeyDTO(p store.ProxyKey) proxyKeyResponse {
 		p.Carriers = []string{}
 	}
 	return proxyKeyResponse{ID: p.ID, Name: p.Name, Kind: p.Kind, Server: p.Server, Port: p.Port,
-		Priority: p.Priority, Enabled: p.Enabled, Carriers: p.Carriers, CreatedAt: p.CreatedAt}
+		Priority: p.Priority, Enabled: p.Enabled, Carriers: p.Carriers, CreatedAt: p.CreatedAt,
+		State: p.State, StateCheckedAt: p.StateCheckedAt, StateLatencyMS: p.StateLatencyMS,
+		StateError: p.StateError}
+}
+
+// nodeProxyKeyStateRequest is what a node reports after checking a batch of keys.
+type nodeProxyKeyStateRequest struct {
+	States []nodeProxyKeyState `json:"states"`
+}
+
+type nodeProxyKeyState struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	LatencyMS *int  `json:"latency_ms"`
+	Error    string `json:"error"`
+}
+
+// handleNodeReportProxyKeyStates takes what the node found when it checked its keys.
+//
+// The node can only check the keys it materialized, and it materializes a handful out of
+// thousands, so this is what moves a key from unknown to known: the ones that reach the
+// provider are handed out first from then on, and the ones that do not stop taking their
+// place in the rotation.
+func (a *App) handleNodeReportProxyKeyStates(w http.ResponseWriter, r *http.Request) {
+	var req nodeProxyKeyStateRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.States) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"stored": 0})
+		return
+	}
+	if len(req.States) > 5000 {
+		writeError(w, http.StatusRequestEntityTooLarge, "too many states at once")
+		return
+	}
+	states := make([]store.ProxyKeyState, 0, len(req.States))
+	for _, s := range req.States {
+		state := s.State
+		if state != "ok" && state != "failed" {
+			state = "failed"
+		}
+		if state == "failed" && s.Error == "" {
+			s.Error = "the provider did not answer"
+		}
+		states = append(states, store.ProxyKeyState{ID: s.ID, State: state, LatencyMS: s.LatencyMS, Error: s.Error})
+	}
+	if err := a.Store.SetProxyKeyStates(r.Context(), states); err != nil {
+		writeInternalError(w, r, "store proxy key states failed", err)
+		return
+	}
+	ok := 0
+	for _, s := range states {
+		if s.State == "ok" {
+			ok++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stored": len(states), "ok": ok})
 }
 
 type nodeProxyKeyResponse struct {

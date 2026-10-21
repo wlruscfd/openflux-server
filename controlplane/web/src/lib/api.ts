@@ -65,6 +65,10 @@ export interface ProxyKeyDTO {
 	enabled: boolean;
 	carriers: string[];
 	created_at: string;
+	state?: 'ok' | 'failed' | 'unknown';
+	state_checked_at?: string;
+	state_latency_ms?: number;
+	state_error?: string;
 }
 
 export interface BulkImportResult {

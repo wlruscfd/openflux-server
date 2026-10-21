@@ -66,12 +66,29 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 		return
 	}
 	alive := 0
+	report := make([]RemoteProxyKeyState, 0, len(states))
 	for _, s := range states {
 		if s.OK {
 			alive++
 		}
+		state := "failed"
+		if s.OK {
+			state = "ok"
+		}
+		latency := int(s.Latency / time.Millisecond)
+		entry := RemoteProxyKeyState{ID: s.ID, State: state, LatencyMS: &latency}
+		if !s.OK {
+			entry.Error = s.Error
+		}
+		report = append(report, entry)
 	}
 	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider", alive, len(states))
+
+	reportCtx, reportCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer reportCancel()
+	if err := o.client.ReportProxyKeyStates(reportCtx, report); err != nil {
+		utils.Debugf("[NODEAGENT] could not report proxy key states: %v", err)
+	}
 }
 
 func (o *Orchestrator) reconcileProxyKeys(ctx context.Context) {

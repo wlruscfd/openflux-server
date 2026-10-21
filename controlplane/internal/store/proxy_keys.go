@@ -235,49 +235,92 @@ func (s *Store) DeleteProxyKey(ctx context.Context, id string) error {
 	return nil
 }
 
+// proxyKeyRotationWindow is how long the order of the unproven keys lasts before it shifts.
+// A node materializes a handful of them at a time, so a window that is too long leaves most
+// of the list untried for hours and one that is too short never finishes a check.
+const proxyKeyRotationWindow = 5 * time.Minute
+
+// ProxyKeyState is what a node found when it last checked one key.
+type ProxyKeyState struct {
+	ID        string
+	State     string
+	LatencyMS *int
+	Error     string
+}
+
+// SetProxyKeyStates records what the node found for a batch of keys in one round trip.
+//
+// A node checks every key it materialized, which is hundreds of them, and one update per key
+// would be hundreds of round trips for a report that is a few kilobytes.
+func (s *Store) SetProxyKeyStates(ctx context.Context, states []ProxyKeyState) error {
+	if len(states) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(states))
+	values := make([]string, 0, len(states))
+	latencies := make([]*int, 0, len(states))
+	errors := make([]string, 0, len(states))
+	for _, st := range states {
+		ids = append(ids, st.ID)
+		values = append(values, st.State)
+		latencies = append(latencies, st.LatencyMS)
+		errors = append(errors, st.Error)
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE proxy_keys p
+		SET state = s.state, state_checked_at = now(), state_latency_ms = s.latency,
+		    state_error = NULLIF(s.failure, ''), updated_at = now()
+		FROM unnest($1::uuid[], $2::text[], $3::int[], $4::text[])
+		     AS s(id, state, latency, failure)
+		WHERE p.id = s.id
+	`, ids, values, latencies, errors)
+	if err != nil {
+		return fmt.Errorf("set proxy key states: %w", err)
+	}
+	return nil
+}
+
 // ListProxyKeysForNode hands a node the enabled keys, each with the carriers it balances for.
 // A key with no carrier is not sent: the panel saves links before they are put to work, and a
 // key nobody claims is not yet routing.
 //
-// The list a node receives is bounded. A public proxy list runs to thousands of links, and a
-// node that opened a listener for every one of them would drown in them: the panel keeps
-// them all as candidates, and the node only ever sees the ones that are worth trying first.
-// The keys a node proved to work come first, then the ones nobody has tried.
+// The list a node receives is bounded, and it rotates. A public proxy list runs to thousands of
+// links, almost all of them dead, and a node can only try the handful it materializes. The keys
+// a node proved to work come first and stay there; the rest are handed out in an order that
+// changes every few minutes, so every candidate is eventually the one that gets tried and
+// checked, instead of the same first few links being tested forever.
 func (s *Store) ListProxyKeysForNode(ctx context.Context, perCarrier int) ([]NodeProxyKey, error) {
 	if perCarrier <= 0 {
 		perCarrier = 256
 	}
+	window := int(time.Now().Unix() / int64(proxyKeyRotationWindow.Seconds()))
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.id, p.name, p.link_enc, p.kind, p.priority,
-		       array_agg(c.carrier ORDER BY c.carrier)
-		FROM proxy_keys p
-		JOIN proxy_key_carriers c ON c.proxy_key_id = p.id
-		WHERE p.enabled = true
-		GROUP BY p.id
-		ORDER BY (p.state = 'ok') DESC, p.priority DESC, p.created_at
-		LIMIT $1
-	`, perCarrier*8)
+		SELECT id, name, link_enc, kind, priority, carriers FROM (
+			SELECT p.id, p.name, p.link_enc, p.kind, p.priority,
+			       array_agg(c.carrier ORDER BY c.carrier) AS carriers,
+			       row_number() OVER (
+			           PARTITION BY c.carrier
+			           ORDER BY (p.state = 'ok') DESC, p.priority DESC,
+			                    mod(abs(hashtext(p.id::text)::bigint + $2::bigint), 1000003),
+			                    p.created_at) AS rn
+			FROM proxy_keys p
+			JOIN proxy_key_carriers c ON c.proxy_key_id = p.id
+			WHERE p.enabled = true
+			GROUP BY p.id, c.carrier
+		) ranked
+		WHERE rn <= $1
+	`, perCarrier, window)
 	if err != nil {
 		return nil, fmt.Errorf("list proxy keys for node: %w", err)
 	}
 	defer rows.Close()
 	var out []NodeProxyKey
-	perCarrierCount := map[string]int{}
 	for rows.Next() {
 		var p NodeProxyKey
 		if err := rows.Scan(&p.ID, &p.Name, &p.LinkEnc, &p.Kind, &p.Priority, &p.Carriers); err != nil {
 			return nil, fmt.Errorf("scan node proxy key: %w", err)
 		}
-		keep := false
-		for _, c := range p.Carriers {
-			if perCarrierCount[c] < perCarrier {
-				perCarrierCount[c]++
-				keep = true
-			}
-		}
-		if keep {
-			out = append(out, p)
-		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

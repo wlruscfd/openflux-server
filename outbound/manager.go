@@ -127,7 +127,7 @@ func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
 	m.mu.Unlock()
 
 	out := make([]KeyState, 0, 64)
-	for carrierType, keys := range groups {
+	for carrierType := range groups {
 		hosts := carrierHostsOf(carrierType)
 		if len(hosts) == 0 {
 			continue
@@ -136,7 +136,10 @@ func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
 		if pool == nil {
 			continue
 		}
-		for _, k := range keys {
+		// Only the materialized keys are checked: they are the ones with a listener, and a
+		// key nobody has tried yet must stay unknown rather than be written down as broken.
+		for _, snap := range pool.Snapshots() {
+			k := Key{ID: snap.ID, Name: snap.Label}
 			ok := false
 			var latency time.Duration
 			var lastErr error

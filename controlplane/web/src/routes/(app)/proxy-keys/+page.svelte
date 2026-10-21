@@ -231,6 +231,7 @@
 						<th>{t('proxy.colCarriers')}</th>
 						<th class="num">{t('proxy.colPriority')}</th>
 						<th>{t('proxy.colStatus')}</th>
+						<th>{t('proxy.colState')}</th>
 						<th>{t('proxy.colCreated')}</th>
 						<th></th>
 					</tr>
@@ -262,6 +263,19 @@
 									<Badge tone="ok" dot>{t('generic.enabled')}</Badge>
 								{:else}
 									<Badge tone="muted" dot>{t('generic.disabled')}</Badge>
+								{/if}
+							</td>
+							<td data-label={t('proxy.colState')}>
+								{#if k.state === 'ok'}
+									<Badge tone="ok" dot>
+										{t('proxy.stateOk')}{k.state_latency_ms ? ` · ${k.state_latency_ms} ms` : ''}
+									</Badge>
+								{:else if k.state === 'failed'}
+									<span title={k.state_error ?? ''}>
+										<Badge tone="danger" dot>{t('proxy.stateFailed')}</Badge>
+									</span>
+								{:else}
+									<Badge tone="muted" dot>{t('proxy.stateUnknown')}</Badge>
 								{/if}
 							</td>
 							<td class="text-xs text-[var(--of-muted)]" data-label={t('proxy.colCreated')}>

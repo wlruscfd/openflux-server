@@ -80,6 +80,7 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("GET /v1/nodes/relay-keys", a.withNodeToken(a.handleNodeListRelayKeys))
 	mux.HandleFunc("GET /v1/nodes/proxy-keys", a.withNodeToken(a.handleNodeListProxyKeys))
 	mux.HandleFunc("POST /v1/nodes/proxy-assignments", a.withNodeToken(a.handleNodeSaveAssignments))
+	mux.HandleFunc("POST /v1/nodes/proxy-key-states", a.withNodeToken(a.handleNodeReportProxyKeyStates))
 	mux.HandleFunc("POST /v1/nodes/{id}/usage", a.withNodeToken(a.handleNodeUsage))
 	mux.HandleFunc("POST /v1/nodes/me/keys/{keyID}/room-list", a.withNodeToken(a.handleNodeRoomList))
 	mux.HandleFunc("POST /v1/nodes/{id}/heartbeat", a.withNodeToken(a.handleNodeHeartbeat))
