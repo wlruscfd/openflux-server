@@ -38,6 +38,11 @@ export interface KeyDTO {
 	FinalExitNodeID: string | null;
 	RelayPort: number | null;
 	WarpProfileID: string | null;
+	// RoomState says whether the rooms a transport makes for itself exist right now.
+	RoomState: string;
+	RoomStateAt: string | null;
+	RoomStateError: string;
+	RoomListAt: string | null;
 	HasCookies: boolean;
 }
 

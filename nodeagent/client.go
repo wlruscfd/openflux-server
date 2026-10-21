@@ -123,7 +123,10 @@ func (c *ControlClient) ReportUsage(ctx context.Context, deltas []UsageDelta) ([
 }
 
 type reportRoomListRequest struct {
-	RoomList string `json:"room_list"`
+	RoomList   string    `json:"room_list"`
+	State      string    `json:"state"`
+	Error      string    `json:"error"`
+	ReportedAt time.Time `json:"reported_at"`
 }
 
 type reportRoomListResponse struct {
@@ -131,13 +134,22 @@ type reportRoomListResponse struct {
 	DocURL  string `json:"doc_url"`
 }
 
-func (c *ControlClient) ReportRoomList(ctx context.Context, keyID, list string) (bool, error) {
-	if list == "" {
+// ReportRoomList tells the panel about the rooms of a key that makes its own.
+//
+// A failure is reported too, and with the reason: a key whose rooms could not be made
+// shows an empty document in the app, and the panel can only say so if the node says why.
+func (c *ControlClient) ReportRoomList(ctx context.Context, keyID, list string, failure string) (bool, error) {
+	if list == "" && failure == "" {
 		return false, nil
 	}
 	var out reportRoomListResponse
 	path := "/v1/nodes/me/keys/" + url.PathEscape(keyID) + "/room-list"
-	if err := c.do(ctx, http.MethodPost, path, reportRoomListRequest{RoomList: list}, &out); err != nil {
+	req := reportRoomListRequest{RoomList: list, ReportedAt: time.Now().UTC()}
+	if list == "" {
+		req.State = "failed"
+		req.Error = failure
+	}
+	if err := c.do(ctx, http.MethodPost, path, req, &out); err != nil {
 		return false, err
 	}
 	return out.Changed, nil

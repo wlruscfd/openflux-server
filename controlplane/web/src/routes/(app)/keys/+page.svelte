@@ -577,6 +577,7 @@
 						<th>{t('keys.colLabel')}</th>
 						<th>{t('keys.colId')}</th>
 						<th>{t('keys.colTransport')}</th>
+						<th>{t('keys.colRoom')}</th>
 						<th>{t('keys.colStatus')}</th>
 						<th class="num">{t('keys.colTraffic')}</th>
 						<th>{t('keys.colOwner')}</th>
@@ -598,7 +599,22 @@
 									<Badge tone={k.HasCookies ? 'ok' : 'warn'}>{k.HasCookies ? t('keys.avitoCookiesSet') : t('keys.avitoCookiesMissing')}</Badge>
 								{/if}
 							</td>
-							<td data-label={t('keys.colStatus')}>
+							<td data-label={t('keys.colRoom')}>
+							{#if k.Transport === 'cupsonline' || k.Transport === 'avito'}
+								{#if k.RoomState === 'ready'}
+									<Badge tone="ok" dot>{t('keys.roomReady')}</Badge>
+								{:else if k.RoomState === 'failed'}
+									<span title={k.RoomStateError ?? ''}>
+										<Badge tone="danger" dot>{t('keys.roomFailed')}</Badge>
+									</span>
+								{:else}
+									<Badge tone="warn" dot>{t('keys.roomWaiting')}</Badge>
+								{/if}
+							{:else}
+								<span class="text-xs text-[var(--of-muted)]">-</span>
+							{/if}
+						</td>
+						<td data-label={t('keys.colStatus')}>
 								<Badge tone={statusTone[status]} dot>{t(statusLabel[status])}</Badge>
 							</td>
 							<td class="num tabular-nums text-[var(--of-ink)]" data-label={t('keys.colTraffic')}>

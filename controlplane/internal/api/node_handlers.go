@@ -1,6 +1,7 @@
 package api
 
 import (
+	"time"
 	"net/http"
 	"strings"
 
@@ -126,6 +127,11 @@ type reportUsageRequest struct {
 
 type roomListRequest struct {
 	RoomList string `json:"room_list"`
+	// State is "ready" when the rooms exist and "failed" when they could not be made.
+	// A failure carries the reason, which is what the panel shows.
+	State      string    `json:"state"`
+	Error      string    `json:"error"`
+	ReportedAt time.Time `json:"reported_at"`
 }
 
 const maxRoomListBytes = 8 * 1024
@@ -139,11 +145,12 @@ func (a *App) handleNodeRoomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	list := strings.TrimSpace(req.RoomList)
-	if list == "" {
+	failed := req.State == "failed"
+	if list == "" && !failed {
 		writeError(w, http.StatusBadRequest, "room_list must not be empty")
 		return
 	}
-	if len(list) > maxRoomListBytes {
+	if list != "" && len(list) > maxRoomListBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, "room list too large")
 		return
 	}
@@ -166,12 +173,23 @@ func (a *App) handleNodeRoomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	changed, err := a.Store.SetKeyDocURLFromNode(r.Context(), k.ID, list)
+	reportedAt := req.ReportedAt
+	if reportedAt.IsZero() {
+		reportedAt = time.Now()
+	}
+	changed, err := a.Store.SetKeyRoomState(r.Context(), k.ID, roomStateOf(req.State), req.Error, list, reportedAt)
 	if err != nil {
 		writeInternalError(w, r, "store room list failed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"changed": changed, "doc_url": list})
+}
+
+func roomStateOf(state string) string {
+	if state == "failed" {
+		return "failed"
+	}
+	return "ready"
 }
 
 func (a *App) handleNodeUsage(w http.ResponseWriter, r *http.Request) {

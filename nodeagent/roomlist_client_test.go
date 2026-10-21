@@ -27,7 +27,7 @@ func TestReportRoomListPostsWhereTheControlPlaneListens(t *testing.T) {
 	defer srv.Close()
 
 	client := NewControlClient(srv.URL, "node-token")
-	changed, err := client.ReportRoomList(context.Background(), "7d721764-5a56-4bd0-8b4d-3aacdb3611c4", "room-a,room-b")
+	changed, err := client.ReportRoomList(context.Background(), "7d721764-5a56-4bd0-8b4d-3aacdb3611c4", "room-a,room-b", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -378,6 +378,22 @@ func (o *Orchestrator) avitoCookiesFor(keyID string) string {	ctx, cancel := con
 	return o.cfg.AvitoCookies
 }
 
+// reportRoomFailure tells the panel that the rooms of a key could not be made.
+//
+// A key whose transport makes its own rooms has no document until the exit creates them.
+// When that fails the client has nothing to open, and the panel cannot tell that from a key
+// that is simply waiting, so the reason is reported.
+func (o *Orchestrator) reportRoomFailure(k RemoteKey, cause error) {
+	if k.Transport != "cupsonline" && k.Transport != "avito" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := o.client.ReportRoomList(ctx, k.ID, "", cause.Error()); err != nil {
+		utils.Debugf("[NODEAGENT] key %s (%s): room failure report failed: %v", k.ID, k.Transport, err)
+	}
+}
+
 func (o *Orchestrator) publishRoomLists(trans transport.Transport, k RemoteKey) {
 	rl, ok := trans.(interface {
 		OnRoomList(func(string))
@@ -396,7 +412,7 @@ func (o *Orchestrator) publishRoomLists(trans transport.Transport, k RemoteKey) 
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			if _, err := o.client.ReportRoomList(ctx, k.ID, published); err != nil {
+			if _, err := o.client.ReportRoomList(ctx, k.ID, published, ""); err != nil {
 				utils.Debugf("[NODEAGENT] key %s (%s): room list report failed: %v", k.ID, k.Transport, err)
 			}
 		}()
@@ -482,6 +498,7 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		w, err := o.startWorker(k)
 		if err != nil {
 			o.noteStartFailure(k.ID)
+			o.reportRoomFailure(k, err)
 			// Port-range exhaustion is logged unconditionally (not gated behind --debug) since it otherwise fails silently, the same way, every poll cycle.
 			if o.cfg.ExitMode == nodetunnel.ExitModeRaw && strings.Contains(err.Error(), "no port range capacity") {
 				log.Printf("[NODEAGENT] key %s not started: %v - this node has reached its concurrent-key ceiling (raise it with --port-range-size, or run another node)", k.ID, err)

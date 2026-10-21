@@ -38,6 +38,13 @@ type Key struct {
 	// WarpProfileID makes the assigned node dial the internet through that Cloudflare WARP account.
 	WarpProfileID *string
 	HasCookies    bool
+	// RoomState says whether the rooms a transport makes for itself exist right now, and
+	// RoomStateError why not. A key whose rooms are missing shows an empty document in the
+	// app, and without this the panel cannot tell a key that is waiting from one that failed.
+	RoomState      string
+	RoomStateAt    *time.Time
+	RoomStateError string
+	RoomListAt     *time.Time
 }
 
 func (k Key) BytesUsedTotal() int64 {

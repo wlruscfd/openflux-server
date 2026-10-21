@@ -114,6 +114,39 @@ func (s *Store) CreateProxyKeys(ctx context.Context, ps []ProxyKey) (int, error)
 }
 
 // SetProxyKeyState records what the node found when it last used a key.
+// SetKeyRoomState records what a node found for a key that makes its own rooms.
+//
+// A list replaces the one the key had: the rooms of a board that has closed are dead, and
+// the node creates new ones, so the client has to be given the new list or it opens dead
+// rooms forever. A report that is older than the list the key already has is ignored, so a
+// late report from a run that ended cannot point the key back at rooms that are gone.
+//
+// A failure does not touch the list: the client can still open the rooms the key had, and
+// the reason the new ones could not be made is what the panel shows.
+func (s *Store) SetKeyRoomState(ctx context.Context, keyID, state, failure, list string, reportedAt time.Time) (bool, error) {
+	if list != "" {
+		tag, err := s.pool.Exec(ctx, `
+			UPDATE keys SET doc_url = $2, room_state = 'ready', room_state_at = now(),
+			       room_state_error = NULL, room_list_at = $3, updated_at = now()
+			WHERE id = $1 AND deleted_at IS NULL
+			  AND (doc_url = '' OR doc_url = $2 OR room_list_at IS NULL OR room_list_at <= $3)
+		`, keyID, list, reportedAt)
+		if err != nil {
+			return false, fmt.Errorf("set key doc url from node: %w", err)
+		}
+		return tag.RowsAffected() > 0, nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE keys SET room_state = $2, room_state_at = now(), room_state_error = NULLIF($3, ''),
+		       updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, keyID, state, failure)
+	if err != nil {
+		return false, fmt.Errorf("set key room state: %w", err)
+	}
+	return true, nil
+}
+
 func (s *Store) SetProxyKeyState(ctx context.Context, id, state string, latencyMS *int, failure string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE proxy_keys SET state = $2, state_checked_at = now(), state_latency_ms = $3,
