@@ -449,6 +449,47 @@ install_core() {
     mark_managed "$RELEASE_REPO" "$CORE_VERSION"
 }
 
+# install_singbox ARCH: puts the sing-box binary the outbound proxy needs into
+# BIN_DIR. Without it the node has no way to dial a carrier through a proxy, and
+# every carrier that needs one fails with a refusal that looks like the provider
+# blocking the node. Sets SINGBOX_ERROR on failure; a missing sing-box is not
+# fatal, the node still works for the carriers that dial straight out.
+SINGBOX_VERSION="1.12.4"
+SINGBOX_ERROR=""
+install_singbox() {
+    case "$1" in
+        amd64) sb_arch=amd64 ;;
+        arm64) sb_arch=arm64 ;;
+        *) SINGBOX_ERROR="неизвестная архитектура $1"; return 1 ;;
+    esac
+    sb_dir="$BIN_DIR/sing-box-$SINGBOX_VERSION"
+    sb_bin="$sb_dir/sing-box"
+    if [ ! -x "$sb_bin" ]; then
+        tmp=$(mktemp -d "$BIN_DIR/.singbox.XXXXXX") || { SINGBOX_ERROR="не удалось создать временный каталог"; return 1; }
+        if ! fetch "https://github.com/SagerNet/sing-box/releases/download/v$SINGBOX_VERSION/sing-box-$SINGBOX_VERSION-linux-$sb_arch.tar.gz" "$tmp/sb.tar.gz"; then
+            rm -rf "$tmp"
+            SINGBOX_ERROR="не удалось скачать sing-box"
+            return 1
+        fi
+        if ! tar -xzf "$tmp/sb.tar.gz" -C "$tmp" 2>/dev/null; then
+            rm -rf "$tmp"
+            SINGBOX_ERROR="не удалось распаковать sing-box"
+            return 1
+        fi
+        mkdir -p "$sb_dir" && chmod 0755 "$sb_dir" || true
+        if [ -f "$tmp/sing-box" ]; then
+            chmod 0755 "$tmp/sing-box" && mv -f "$tmp/sing-box" "$sb_bin" || { rm -rf "$tmp"; SINGBOX_ERROR="не удалось установить sing-box"; return 1; }
+        else
+            rm -rf "$tmp"
+            SINGBOX_ERROR="в архиве sing-box нет бинарника"
+            return 1
+        fi
+        rm -rf "$tmp"
+    fi
+    ln -sfn "sing-box-$SINGBOX_VERSION/sing-box" "$BIN_DIR/sing-box"
+    return 0
+}
+
 write_unit() {
     cat > "$UNIT_FILE" <<EOF
 $MARKER
@@ -465,6 +506,7 @@ StateDirectory=openflux-node/%i
 # apply creates the directory too: systemd before 235 ignores StateDirectory=.
 ReadWritePaths=-$STATE_ROOT/%i
 WorkingDirectory=$STATE_ROOT/%i
+Environment=OPENFLUX_SINGBOX=$BIN_DIR/sing-box
 ExecStart=$BIN_DIR/openflux --config $CONF_ROOT/%i/node.conf
 Restart=always
 RestartSec=5
@@ -605,6 +647,7 @@ cmd_apply() {
     fi
 
     install_core "$arch" || apply_fail download "$CORE_ERROR"
+    install_singbox "$arch" || printf '  ! sing-box не установлен: %s\n' "$SINGBOX_ERROR"
 
     mkdir -p "$CONF_ROOT" && chmod 0755 "$CONF_ROOT"
     dir="$CONF_ROOT/$CHANNEL"
@@ -735,6 +778,7 @@ cmd_upgrade() {
     arch=$(detect_arch)
     [ -n "$arch" ] || fail upgrade "архитектура $(uname -m) не поддерживается"
     install_core "$arch" || fail upgrade "$CORE_ERROR"
+    install_singbox "$arch" || printf '  ! sing-box не установлен: %s\n' "$SINGBOX_ERROR"
     set --
     for ch in $(list_channels); do
         if systemctl is-active --quiet "openflux-node@$ch"; then
