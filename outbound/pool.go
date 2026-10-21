@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"crypto/tls"
 	"context"
 	"errors"
 	"fmt"
@@ -433,6 +434,11 @@ func (p *Pool) DialContext(ctx context.Context, subject, network, address string
 // the provider at all, through whichever key it likes best. A list of a thousand public
 // proxies is mostly dead, and the panel has to know which ones are alive, so every key is
 // checked on its own and the result is kept with the key.
+//
+// The check is a TLS handshake and not a plain connection: a provider that does not like the
+// address a request comes from lets the connection open and closes it during the handshake.
+// A key that only opens a socket cannot fetch the document, and marking it as one that can
+// sends the carrier to a key that will only ever fail.
 func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (time.Duration, error) {
 	p.mu.Lock()
 	st := p.byID[keyID]
@@ -448,7 +454,18 @@ func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (ti
 		st.recordFailure(err, p.cfg.Cooldown)
 		return time.Since(started), err
 	}
-	conn.Close()
+	defer conn.Close()
+
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		st.failures.Add(1)
+		st.recordFailure(err, p.cfg.Cooldown)
+		return time.Since(started), fmt.Errorf("tls %s: %w", host, err)
+	}
 	took := time.Since(started)
 	st.recordSuccess(took)
 	return took, nil
