@@ -448,10 +448,7 @@ func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (ti
 	}
 	started := time.Now()
 	conn, err := st.dial.DialContext(ctx, network, address)
-	st.dials.Add(1)
 	if err != nil {
-		st.failures.Add(1)
-		st.recordFailure(err, p.cfg.Cooldown)
 		return time.Since(started), err
 	}
 	defer conn.Close()
@@ -462,13 +459,13 @@ func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (ti
 	}
 	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		st.failures.Add(1)
-		st.recordFailure(err, p.cfg.Cooldown)
 		return time.Since(started), fmt.Errorf("tls %s: %w", host, err)
 	}
-	took := time.Since(started)
-	st.recordSuccess(took)
-	return took, nil
+	// The check does not touch the key's score. A check is not use: penalising a key for
+	// failing a probe puts every key of a carrier into a cooldown at once, and the
+	// carrier then has nothing left to dial with. The panel is told the result and
+	// decides what to hand out next; the score belongs to the traffic that failed.
+	return time.Since(started), nil
 }
 
 func (p *Pool) Probe(ctx context.Context, subject, network, address string) error {
