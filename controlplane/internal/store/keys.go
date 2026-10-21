@@ -41,7 +41,7 @@ func scanKey(row pgx.Row) (model.Key, error) {
 const keyColumns = `id, label, transport, doc_url, doc_urls, e2e_encryption, assigned_node_id, enabled,
 	traffic_limit_bytes, bytes_sent_total, bytes_received_total, owner_ref,
 	expires_at, created_at, updated_at, last_seen_at, final_exit_node_id, relay_port, deleted_at, warp_profile_id,
-	room_state, room_state_at, room_state_error, room_list_at`
+	room_state, room_state_at, COALESCE(room_state_error, ''), room_list_at`
 
 // CreateKey best-effort assigns the new key to whichever active node currently carries the fewest enabled keys, keeping the fleet roughly balanced without a separate scheduler.
 func (s *Store) CreateKey(ctx context.Context, p CreateKeyParams) (model.Key, error) {
