@@ -1,18 +1,14 @@
-A carousel that checks every candidate and keeps the ones that work
+Proxy keys: every listener has to be bound to its own outbound
 
-A public proxy list is thousands of links long and almost all of them are dead.
-The panel kept them all, but the node materialized the first few dozen and
-checked those, over and over: the same links were tested while the rest of the
-list was never tried, and a key that was never tried looked exactly like one
-that did not work.
+The sing-box config opened a local listener per key and wrote an outbound per
+key, but nothing said which listener belongs to which outbound. sing-box sends
+whatever arrives on an unbound listener out through the first outbound in the
+list, so every key was dialled through the first one and the rest were never
+used at all.
 
-The panel now hands a node a bounded list per carrier whose order changes every
-five minutes, so every candidate eventually reaches the front, and the keys a
-node proved to work are handed out first and stay there. The node checks each
-materialized key on its own against the services its carrier has to reach, and
-reports what it found; the panel keeps that, so the order it hands out is the
-order of what actually works. A key nobody has tried stays unknown rather than
-being written down as broken.
-
-The panel shows the result in the key list: a key that reaches its provider, the
-latency it took, or the refusal it answered with.
+That is why the whole proxy fleet looked dead while the keys were alive: one
+address that stopped answering made every carrier fail, the probe reported the
+first key's state for all of them, and a key that could have reached the
+provider was never given a chance. The config now binds every listener to its
+own outbound, and a request through a listener leaves through that key and
+nothing else.

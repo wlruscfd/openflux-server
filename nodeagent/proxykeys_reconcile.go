@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/p1neappleXpress/OpenFlux/outbound"
@@ -66,23 +67,46 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 		return
 	}
 	alive := 0
-	report := make([]RemoteProxyKeyState, 0, len(states))
+	// A key is checked once per carrier it serves, and the carriers reach different
+	// services, so the same key can pass one and fail the next. It is one key, and it is
+	// worth keeping if it reaches any of the services it is meant to reach.
+	byKey := make(map[string]RemoteProxyKeyState, len(states))
+	order := make([]string, 0, len(states))
 	for _, s := range states {
-		if s.OK {
-			alive++
-		}
 		state := "failed"
-		if s.OK {
-			state = "ok"
-		}
 		latency := int(s.Latency / time.Millisecond)
 		entry := RemoteProxyKeyState{ID: s.ID, State: state, LatencyMS: &latency}
 		if !s.OK {
 			entry.Error = s.Error
 		}
+		prev, seen := byKey[s.ID]
+		if !seen {
+			order = append(order, s.ID)
+			byKey[s.ID] = entry
+			continue
+		}
+		if prev.State != "ok" && s.OK {
+			entry.Error = ""
+			byKey[s.ID] = entry
+		}
+	}
+	report := make([]RemoteProxyKeyState, 0, len(order))
+	for _, id := range order {
+		entry := byKey[id]
+		if entry.State == "ok" {
+			alive++
+			report = append(report, entry)
+			continue
+		}
+		// A refused connection to the local listener is not the key failing: the sidecar
+		// was rebuilt and the key was not tested at all. Writing that down would demote
+		// a working key every time the rotation rebuilt the sidecar.
+		if strings.Contains(entry.Error, "connection refused") {
+			continue
+		}
 		report = append(report, entry)
 	}
-	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider", alive, len(states))
+	log.Printf("[NODEAGENT] proxy keys checked: %d of %d reach their provider", alive, len(report))
 
 	reportCtx, reportCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer reportCancel()

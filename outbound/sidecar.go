@@ -367,6 +367,17 @@ type singboxConfig struct {
 	Log       singboxLog        `json:"log"`
 	Inbounds  []json.RawMessage `json:"inbounds"`
 	Outbounds []json.RawMessage `json:"outbounds"`
+	Route     *singboxRoute     `json:"route,omitempty"`
+}
+
+type singboxRoute struct {
+	Rules []singboxRouteRule `json:"rules"`
+	Final string             `json:"final"`
+}
+
+type singboxRouteRule struct {
+	Inbound  []string `json:"inbound"`
+	Outbound string   `json:"outbound"`
 }
 
 type singboxLog struct {
@@ -541,6 +552,7 @@ func singboxOutbound(k Key, tag string) (json.RawMessage, error) {
 
 func buildSingboxConfig(keys []Key, ports map[string]int, logLevel string) ([]byte, error) {
 	cfg := singboxConfig{Log: singboxLog{Level: logLevel, Timestamp: true}}
+	route := &singboxRoute{Final: "direct"}
 	for i, k := range keys {
 		tag := keyTag(i)
 		out, err := singboxOutbound(k, tag)
@@ -562,12 +574,21 @@ func buildSingboxConfig(keys []Key, ports map[string]int, logLevel string) ([]by
 		}
 		cfg.Outbounds = append(cfg.Outbounds, out)
 		cfg.Inbounds = append(cfg.Inbounds, in)
+		// Each listener has to be bound to its own outbound. Without the rule sing-box sends
+		// everything that arrives on any of them out through the first outbound in the list,
+		// so every key looked like the first one: the fleet appeared to be a single dead
+		// address, and the rest of the keys were never used at all.
+		route.Rules = append(route.Rules, singboxRouteRule{
+			Inbound:  []string{tag + "-in"},
+			Outbound: tag,
+		})
 	}
 	direct, err := json.Marshal(map[string]any{"type": "direct", "tag": "direct"})
 	if err != nil {
 		return nil, err
 	}
 	cfg.Outbounds = append(cfg.Outbounds, direct)
+	cfg.Route = route
 	return json.MarshalIndent(cfg, "", "  ")
 }
 

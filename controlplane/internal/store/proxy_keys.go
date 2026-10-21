@@ -301,7 +301,8 @@ func (s *Store) ListProxyKeysForNode(ctx context.Context, perCarrier int) ([]Nod
 			       row_number() OVER (
 			           PARTITION BY c.carrier
 			           ORDER BY (p.state = 'ok') DESC, p.priority DESC,
-			                    mod(abs(hashtext(p.id::text)::bigint + $2::bigint), 1000003),
+			                    mod(abs((hashtext(p.id::text || ':' || c.carrier)::bigint % 1000003)
+			                            * (1 + ($2::bigint * 7919) % 1000003)), 1000003),
 			                    p.created_at) AS rn
 			FROM proxy_keys p
 			JOIN proxy_key_carriers c ON c.proxy_key_id = p.id
