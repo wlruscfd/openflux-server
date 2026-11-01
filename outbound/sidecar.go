@@ -50,7 +50,7 @@ func (o SidecarOptions) withDefaults() SidecarOptions {
 		// The node opens one local listener per key it uses, so the range has to hold the
 		// whole set the node materializes. It was a thousand ports, which a handful of
 		// carriers with a few hundred keys each no longer fits in.
-		o.PortHigh = 42999
+		o.PortHigh = 48999
 	}
 	if o.LogLevel == "" {
 		o.LogLevel = "error"
