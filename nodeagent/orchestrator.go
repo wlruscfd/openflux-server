@@ -122,6 +122,7 @@ type Orchestrator struct {
 
 	proxyKeyFailuresMu sync.Mutex
 	proxyKeyFailures   map[string]int
+	proxyStable        proxyStabilizer
 
 	warpMu sync.Mutex
 	warps  map[string]*warp.Tunnel

@@ -36,6 +36,10 @@ type keyState struct {
 	cooldownUntil  time.Time
 	lastErr        error
 
+	// probe is what the last check of this key found: 0 not checked, 1 reached the provider,
+	// 2 did not. It steers the choice of a key for a new subject and never penalises one.
+	probe atomic.Int32
+
 	dials    atomic.Uint64
 	failures atomic.Uint64
 }
@@ -62,6 +66,16 @@ func (s *keyState) recordFailure(err error, cooldown time.Duration) {
 	s.seen, s.healthy = true, false
 	s.consecutiveErr++
 	s.lastErr = err
+	// A key that keeps failing is left alone for longer each time. A fixed pause let a dead key
+	// come back every minute and a half and cost a connection attempt - five seconds of timeout
+	// for the carrier that happened to be on it - for as long as the key stayed in the set.
+	shift := s.consecutiveErr - 1
+	if shift > 4 {
+		shift = 4
+	}
+	if shift > 0 {
+		cooldown <<= uint(shift)
+	}
 	if until := time.Now().Add(cooldown); until.After(s.cooldownUntil) {
 		s.cooldownUntil = until
 	}
@@ -74,6 +88,18 @@ func (s *keyState) available(now time.Time) bool {
 		return true
 	}
 	return now.After(s.cooldownUntil)
+}
+
+// rank orders keys for a new subject: a key a check found working first, one nobody has checked
+// next, one a check found dead last.
+func (s *keyState) rank() int {
+	switch s.probe.Load() {
+	case 1:
+		return 0
+	case 2:
+		return 2
+	}
+	return 1
 }
 
 func (s *keyState) score() float64 {
@@ -273,7 +299,7 @@ func (p *Pool) bestLocked(now time.Time) *keyState {
 			continue
 		}
 		s := st.score()
-		if best == nil || s < bestScore {
+		if best == nil || st.rank() < best.rank() || (st.rank() == best.rank() && s < bestScore) {
 			best, bestScore = st, s
 		}
 	}
@@ -333,7 +359,9 @@ func (p *Pool) spreadLocked(subject string, now time.Time) *keyState {
 		if !st.available(now) {
 			continue
 		}
-		if best == nil || load[st.id] < load[best.id] || (load[st.id] == load[best.id] && st.score() < best.score()) {
+		if best == nil || st.rank() < best.rank() ||
+			(st.rank() == best.rank() && (load[st.id] < load[best.id] ||
+				(load[st.id] == load[best.id] && st.score() < best.score()))) {
 			best = st
 		}
 	}
@@ -449,6 +477,7 @@ func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (ti
 	started := time.Now()
 	conn, err := st.dial.DialContext(ctx, network, address)
 	if err != nil {
+		st.probe.Store(2)
 		return time.Since(started), err
 	}
 	defer conn.Close()
@@ -459,8 +488,10 @@ func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (ti
 	}
 	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		st.probe.Store(2)
 		return time.Since(started), fmt.Errorf("tls %s: %w", host, err)
 	}
+	st.probe.Store(1)
 	// The check does not touch the key's score. A check is not use: penalising a key for
 	// failing a probe puts every key of a carrier into a cooldown at once, and the
 	// carrier then has nothing left to dial with. The panel is told the result and

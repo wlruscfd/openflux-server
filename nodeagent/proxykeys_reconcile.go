@@ -132,7 +132,11 @@ func (o *Orchestrator) probeProxyKeys(ctx context.Context) {
 	for id, entry := range byKey {
 		if entry.State == "ok" {
 			delete(fails, id)
+			o.proxyStable.noteChecked(id, true)
 			continue
+		}
+		if !strings.Contains(entry.Error, "connection refused") {
+			o.proxyStable.noteChecked(id, false)
 		}
 		// A refused connection to the local listener is not the key failing: the sidecar
 		// was rebuilt and the key was not tested at all. Counting it would condemn a
@@ -210,6 +214,23 @@ func (o *Orchestrator) reconcileProxyKeys(ctx context.Context) {
 	if o.proxy == nil {
 		o.proxy = outbound.NewManager(singboxOptionsFromEnv())
 	}
+	// The panel's window moves every few minutes, and every change of the set restarts sing-box and
+	// drops every open carrier connection. A set that works is kept; only broken keys leave and new
+	// ones join, at most once per rebuild interval.
+	fails := o.proxyKeyFailuresLocked()
+	wanted, rebuild := o.proxyStable.choose(groups, func(id string) bool {
+		o.proxyKeyFailuresMu.Lock()
+		defer o.proxyKeyFailuresMu.Unlock()
+		return fails[id] >= proxyKeyFailuresBeforeBroken
+	}, time.Now())
+	if !rebuild {
+		if o.proxyInstalled {
+			o.restoreProxyAssignments(resp.Assignments)
+			o.reportProxyAssignments(ctx)
+		}
+		return
+	}
+	groups = wanted
 	if err := o.proxy.Apply(groups); err != nil {
 		// A proxy that did not come up leaves the carriers dialing straight out, and the
 		// provider that blocks this node's address is exactly why the proxy is there.
@@ -217,6 +238,7 @@ func (o *Orchestrator) reconcileProxyKeys(ctx context.Context) {
 		utils.Debugf("[NODEAGENT] could not bring the proxy pools up: %v", err)
 		return
 	}
+	o.proxyStable.committed(groups, time.Now())
 	if !o.proxyInstalled {
 		o.proxy.LoadCarrierHosts()
 		o.proxy.Install()
@@ -255,6 +277,7 @@ func (o *Orchestrator) teardownProxy() {
 	installed := o.proxyInstalled
 	o.proxy, o.proxyInstalled = nil, false
 	o.proxyMu.Unlock()
+	o.proxyStable.reset()
 	if p != nil {
 		p.Stop()
 	}
