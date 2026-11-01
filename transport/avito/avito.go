@@ -28,7 +28,7 @@ var baseURL = "https://code.avito.ru"
 
 const (
 	avitoHost   = "code.avito.ru"
-	avitoUA     = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+	avitoUA     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 	shareDBType = "http://sharejs.org/types/textv1"
 	roomBudget  = 16
 	maxRooms    = 4
