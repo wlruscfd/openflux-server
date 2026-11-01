@@ -9,7 +9,7 @@ import (
 
 var defaultHostRates = map[string]float64{
 	"cloud.mail.ru": 0.2,
-	"code.avito.ru": 4,
+	"code.avito.ru": 1,
 }
 
 var (

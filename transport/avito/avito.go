@@ -230,6 +230,9 @@ func (w *avitoWS) dial() (*websocket.Conn, error) {
 	header.Set("Origin", baseURL)
 	header.Set("Cookie", w.cookieHeader())
 
+	if !waitWSPause(w.ctx.Done()) {
+		return nil, errStopped
+	}
 	if !transport.WaitHostSlot(avitoHost, w.ctx.Done()) {
 		return nil, errStopped
 	}
@@ -246,6 +249,7 @@ func (w *avitoWS) dial() (*websocket.Conn, error) {
 			if s, perr := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); perr == nil && s > 0 {
 				after = time.Duration(s) * time.Second
 			}
+			noteWSThrottle(after)
 			return nil, &throttledError{after: after}
 		}
 		return nil, fmt.Errorf("dial: %w", err)
@@ -362,10 +366,6 @@ func (w *avitoWS) run() {
 		}
 		var throttled *throttledError
 		if errors.As(err, &throttled) {
-			utils.Infof("[AVITO] room %s: %v", short(w.roomID), err)
-			if !sleepCtx(w.ctx, jittered(throttled.after)) {
-				return
-			}
 			continue
 		}
 		if w.stats.reconnects.Load() <= 3 {
