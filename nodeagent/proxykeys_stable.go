@@ -11,11 +11,11 @@ import (
 // restarts sing-box, and a restart drops every open carrier connection at once - rooms, tunnels
 // and websockets all go down together. The panel rotates its window of candidates every few
 // minutes, so applying each window as it came made the whole node fall over on a timer.
-const proxyRebuildMinInterval = 15 * time.Minute
+const proxyRebuildMinInterval = 30 * time.Minute
 
 // proxyRebuildUrgentInterval applies when a carrier has no working key in the set at all: waiting
 // longer only keeps it down, so a rebuild is worth the cost, but not in a tight loop.
-const proxyRebuildUrgentInterval = 2 * time.Minute
+const proxyRebuildUrgentInterval = 10 * time.Minute
 
 // proxyStabilizer keeps the set of keys handed to sing-box steady between rebuilds. A key that
 // still works stays in the set even when the panel's window has moved past it, and only keys
