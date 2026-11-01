@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"strconv"
+
 	"github.com/gorilla/websocket"
 
 	"github.com/p1neappleXpress/OpenFlux/transport"
@@ -237,11 +239,26 @@ func (w *avitoWS) dial() (*websocket.Conn, error) {
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,
 	}
-	conn, _, err := dialer.DialContext(w.ctx, wsURL, header)
+	conn, resp, err := dialer.DialContext(w.ctx, wsURL, header)
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+			after := 60 * time.Second
+			if s, perr := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); perr == nil && s > 0 {
+				after = time.Duration(s) * time.Second
+			}
+			return nil, &throttledError{after: after}
+		}
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 	return conn, nil
+}
+
+// throttledError is the provider asking this address to wait before the next connection. Retrying
+// on the ordinary short delay only keeps the limit alive and starves every room of the key.
+type throttledError struct{ after time.Duration }
+
+func (e *throttledError) Error() string {
+	return fmt.Sprintf("dial: the provider asked to wait %s (429)", e.after)
 }
 
 func (w *avitoWS) writeJSON(v interface{}) error {
@@ -342,6 +359,17 @@ func (w *avitoWS) run() {
 		w.stats.reconnects.Add(1)
 		if time.Since(started) >= w.config.HealthyAfter {
 			delay = w.config.ReconnectMinDelay
+		}
+		var throttled *throttledError
+		if errors.As(err, &throttled) {
+			utils.Infof("[AVITO] room %s: %v", short(w.roomID), err)
+			if !sleepCtx(w.ctx, jittered(throttled.after)) {
+				return
+			}
+			continue
+		}
+		if w.stats.reconnects.Load() <= 3 {
+			utils.Infof("[AVITO] room %s: connection failed: %v", short(w.roomID), err)
 		}
 		if !sleepCtx(w.ctx, jittered(delay)) {
 			return
