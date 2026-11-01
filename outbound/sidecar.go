@@ -68,10 +68,11 @@ type Sidecar struct {
 	opts SidecarOptions
 
 	mu        sync.Mutex
-	cmd       *exec.Cmd
-	keys      []Key
-	dialers   map[string]Dialer
-	finger    string
+	segments      []*segment
+	dialers       map[string]Dialer
+	nextSeg       int
+	orphansKilled bool
+	reaping       bool
 	stopped   bool
 	startedAt time.Time
 }
@@ -104,7 +105,7 @@ func (s *Sidecar) DialerFor(keyID string) Dialer {
 func (s *Sidecar) Running() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cmd != nil
+	return len(s.segments) > 0
 }
 
 func fingerprint(keys []Key) string {
@@ -115,116 +116,6 @@ func fingerprint(keys []Key) string {
 			k.SNI, k.Flow, k.Reality, k.PublicKey, k.ShortID)
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func (s *Sidecar) Apply(keys []Key) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.stopped {
-		return fmt.Errorf("sing-box sidecar is stopped")
-	}
-	// A public key list is thousands of entries and some are broken. Refusing the whole batch over
-	// one bad link takes every good key down with it, so unusable ones are dropped here and the
-	// rest are still served.
-	usable := keys[:0]
-	var dropped []string
-	for _, k := range keys {
-		if err := k.Valid(); err != nil {
-			dropped = append(dropped, fmt.Sprintf("%s: %v", k.Label(), err))
-			continue
-		}
-		usable = append(usable, k)
-	}
-	keys = usable
-	for _, d := range dropped {
-		if skippedInLog < 20 {
-			utils.Debugf("[OUTBOUND] proxy key dropped: %s", d)
-		}
-		skippedInLog++
-	}
-	if len(keys) == 0 {
-		return fmt.Errorf("none of the %d proxy keys are usable", len(dropped))
-	}
-	fp := fingerprint(keys)
-	if fp == s.finger && s.cmd != nil {
-		return nil
-	}
-	// The old process is stopped before the ports are counted: it is holding the very ports
-	// the new one has to bind, and while it runs they look taken, so a set of keys that
-	// fits the range does not look like it fits.
-	s.stopProcessLocked()
-	ports, err := s.allocatePorts(len(keys))
-	if err != nil {
-		utils.Infof("[OUTBOUND] sing-box got no ports for %d keys: %v", len(keys), err)
-		return err
-	}
-	byID := make(map[string]int, len(keys))
-	for _, k := range keys {
-		byID[k.ID] = ports[len(byID)]
-	}
-	config, err := buildSingboxConfig(keys, byID, s.opts.LogLevel)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(s.opts.WorkDir, 0o700); err != nil {
-		return err
-	}
-	path := filepath.Join(s.opts.WorkDir, "config.json")
-	if err := os.WriteFile(path, config, 0o600); err != nil {
-		return err
-	}
-	// sing-box validates a whole config or nothing: one link carrying a field this build has never
-	// heard of - a flow variant, an unknown transport - would take every other key down with it.
-	// Checking first keeps one odd entry from costing the node its tunnel.
-	keys, err = s.dropKeysRefusedBySingbox(keys, path)
-	if err != nil {
-		return err
-	}
-	if len(keys) == 0 {
-		return fmt.Errorf("sing-box refused every proxy key in this batch")
-	}
-	keptPorts := make(map[string]int, len(keys))
-	for _, k := range keys {
-		keptPorts[k.ID] = byID[k.ID]
-	}
-	byID = keptPorts
-	config, err = buildSingboxConfig(keys, byID, s.opts.LogLevel)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, config, 0o600); err != nil {
-		return err
-	}
-	dialers := make(map[string]Dialer, len(keys))
-	for _, k := range keys {
-		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(byID[k.ID]))
-		dialers[k.ID] = newSocksDialer(addr, directDialer{}, 15*time.Second)
-	}
-	s.stopProcessLocked()
-	s.killOrphan()
-	cmd := exec.Command(s.opts.Binary, "run", "-c", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = processAttributes()
-	if err := cmd.Start(); err != nil {
-		utils.Infof("[OUTBOUND] sing-box did not start: %v", err)
-		return fmt.Errorf("start sing-box: %w", err)
-	}
-	s.startedAt = time.Now()
-	s.writePIDFileLocked(cmd.Process.Pid)
-	// sing-box opens one listener per key, and the listeners are checked one after another.
-	// A fixed wait is not enough for a few hundred keys: the process is killed while it is
-	// still coming up, and the node is left with no proxy at all and no way to see why.
-	wait := s.opts.StartWait + time.Duration(len(byID))*150*time.Millisecond
-	if err := waitPorts(byID, wait); err != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		s.clearPIDFileLocked()
-		utils.Infof("[OUTBOUND] sing-box did not come up with %d keys: %v", len(byID), err)
-		return err
-	}
-	s.cmd, s.keys, s.dialers, s.finger = cmd, keys, dialers, fp
-	return nil
 }
 
 // dropKeysRefusedBySingbox asks sing-box itself which keys it will accept. The full config is tried
@@ -269,31 +160,6 @@ func (s *Sidecar) checkConfig(path string) error {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func (s *Sidecar) Stop() {
-	s.mu.Lock()
-	s.stopped = true
-	s.stopProcessLocked()
-	s.finger = ""
-}
-
-func (s *Sidecar) stopProcessLocked() {
-	cmd := s.cmd
-	s.cmd = nil
-	if cmd == nil || cmd.Process == nil {
-		return
-	}
-	_ = cmd.Process.Signal(terminateSignal())
-	done := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(s.opts.StopGrace):
-		_ = cmd.Process.Kill()
-		<-done
-	}
-	s.clearPIDFileLocked()
 }
 
 func (s *Sidecar) pidFile() string { return filepath.Join(s.opts.WorkDir, "sing-box.pid") }
