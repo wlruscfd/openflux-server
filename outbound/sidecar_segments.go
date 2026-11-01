@@ -112,13 +112,14 @@ func (s *Sidecar) Apply(keys []Key) error {
 			seg.retireAt = time.Now()
 		}
 	}
+	s.reapLocked(time.Now(), false)
+	s.compactLocked(ordered, wanted, have)
 	var fresh []Key
 	for _, k := range ordered {
 		if have[k.ID] == nil {
 			fresh = append(fresh, k)
 		}
 	}
-	s.reapLocked(time.Now(), false)
 	if len(fresh) > 0 {
 		started, err := s.startSegmentLocked(fresh)
 		if err != nil {
