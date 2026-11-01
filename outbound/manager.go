@@ -39,6 +39,8 @@ type Manager struct {
 	mu      sync.Mutex
 	groups  map[string][]Key
 	probeIn time.Duration
+	slowAt  map[string]time.Time
+	cursor  map[string]int
 }
 
 func NewManager(opts SidecarOptions) *Manager {
@@ -115,6 +117,7 @@ func (m *Manager) Apply(groups map[string][]Key) error {
 			m.router.SetPool(carrierType, pool)
 		}
 		pool.SetKeys(specs)
+		pool.SetVerifiedOnly(verifiedCarriers[carrierType])
 	}
 	return nil
 }
@@ -123,12 +126,12 @@ func (m *Manager) Apply(groups map[string][]Key) error {
 // key is meant to reach. The panel keeps it, so the list can be sorted by what actually
 // works instead of by the order the links were pasted in.
 type KeyState struct {
-	ID       string        `json:"id"`
-	Carrier  string        `json:"carrier"`
-	OK       bool          `json:"ok"`
-	Latency  time.Duration `json:"latency"`
-	Error    string        `json:"error,omitempty"`
-	CheckedAt time.Time    `json:"checked_at"`
+	ID        string        `json:"id"`
+	Carrier   string        `json:"carrier"`
+	OK        bool          `json:"ok"`
+	Latency   time.Duration `json:"latency"`
+	Error     string        `json:"error,omitempty"`
+	CheckedAt time.Time     `json:"checked_at"`
 }
 
 // ProbeAll checks every key of every carrier against the hosts that carrier has to reach.
@@ -151,6 +154,11 @@ func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
 		if len(hosts) == 0 {
 			out = append(out, KeyState{ID: "-", Carrier: carrierType, Error: "no service host for this carrier",
 				CheckedAt: time.Now()})
+			continue
+		}
+		if verifiedCarriers[carrierType] {
+			// Slow, provider-specific check: a few keys per round, never the whole pool.
+			out = append(out, m.probeCarousel(ctx, carrierType, pool, hosts)...)
 			continue
 		}
 		// Only the materialized keys are checked: they are the ones with a listener, and a

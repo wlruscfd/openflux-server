@@ -1,8 +1,8 @@
 package outbound
 
 import (
-	"crypto/tls"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"math"
@@ -38,7 +38,8 @@ type keyState struct {
 
 	// probe is what the last check of this key found: 0 not checked, 1 reached the provider,
 	// 2 did not. It steers the choice of a key for a new subject and never penalises one.
-	probe atomic.Int32
+	probe      atomic.Int32
+	verifiedAt atomic.Int64
 
 	dials    atomic.Uint64
 	failures atomic.Uint64
@@ -177,6 +178,8 @@ type KeySpec struct {
 type Pool struct {
 	cfg PoolConfig
 
+	verifiedOnly atomic.Bool
+
 	mu      sync.Mutex
 	keys    []*keyState
 	byID    map[string]*keyState
@@ -291,11 +294,19 @@ func (p *Pool) heldLocked(subject string, now time.Time) bool {
 	return now.Before(p.heldTil[subject])
 }
 
+// usableLocked: a key that may be dialed now. A pool that serves only verified keys skips the rest.
+func (p *Pool) usableLocked(st *keyState, now time.Time) bool {
+	if !st.available(now) {
+		return false
+	}
+	return !p.verifiedOnly.Load() || st.verified(now)
+}
+
 func (p *Pool) bestLocked(now time.Time) *keyState {
 	var best *keyState
 	bestScore := math.Inf(1)
 	for _, st := range p.keys {
-		if !st.available(now) {
+		if !p.usableLocked(st, now) {
 			continue
 		}
 		s := st.score()
@@ -311,7 +322,7 @@ func (p *Pool) pickLocked(subject string, now time.Time) *keyState {
 		return nil
 	}
 	if id := p.pinned[subject]; id != "" {
-		if st := p.byID[id]; st != nil && st.available(now) {
+		if st := p.byID[id]; st != nil && p.usableLocked(st, now) {
 			return st
 		}
 		if p.heldLocked(subject, now) {
@@ -345,7 +356,7 @@ func (p *Pool) noteMoveLocked(subject string, now time.Time) {
 
 func (p *Pool) spreadLocked(subject string, now time.Time) *keyState {
 	if id := p.pinned[subject]; id != "" {
-		if st := p.byID[id]; st != nil && st.available(now) {
+		if st := p.byID[id]; st != nil && p.usableLocked(st, now) {
 			return st
 		}
 		delete(p.pinned, subject)
@@ -356,7 +367,7 @@ func (p *Pool) spreadLocked(subject string, now time.Time) *keyState {
 	}
 	var best *keyState
 	for _, st := range p.keys {
-		if !st.available(now) {
+		if !p.usableLocked(st, now) {
 			continue
 		}
 		if best == nil || st.rank() < best.rank() ||

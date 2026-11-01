@@ -280,6 +280,10 @@ func (s *Sidecar) startReaperLocked() {
 			}
 			s.pruneDeadLocked()
 			s.reapLocked(time.Now(), false)
+			if memLow() {
+				utils.Infof("[OUTBOUND] memory is low, stopping an idle sing-box process")
+				s.reapLocked(time.Now(), true)
+			}
 			s.mu.Unlock()
 		}
 	}()

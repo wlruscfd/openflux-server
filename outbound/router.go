@@ -183,6 +183,9 @@ func (r *Router) Dial(ctx context.Context, network, address string, direct trans
 	if pool == nil || pool.Len() == 0 {
 		return direct(ctx, network, address)
 	}
+	if pool.VerifiedOnly() && !pool.HasVerified() {
+		return direct(ctx, network, address)
+	}
 	subject := carrierType + "|" + address
 	if hint, ok := transport.DialHintFrom(ctx); ok {
 		subject = carrierType + "|" + hint.Subject
