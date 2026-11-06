@@ -104,6 +104,10 @@ export const ru = {
 	'keys.docUrlPhCups': 'WyI0OTdkZDBmZC01MGMy…',
 	'keys.docUrlAvito': 'Список комнат avito (base64)',
 	'keys.docUrlPhAvito': 'WyJyb29tLTEi…',
+	'keys.docUrlBitrix': 'Ссылка на доску Bitrix24',
+	'keys.docUrlPhBitrix': 'https://…bitrix24.ru/docs/…',
+	'keys.docUrlPruffme': 'Ссылка на доску PRUFFME',
+	'keys.docUrlPhPruffme': 'https://…pruffme.com/…',
 	'keys.docUrlDirect': 'Ссылка (для direct не нужна)',
 	'keys.docUrlPhDirect': '(не используется для direct)',
 

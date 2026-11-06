@@ -24,7 +24,7 @@ const (
 )
 
 // dynamicIDs are the transports this core can run from a package; the catalog may list more for newer apps.
-var dynamicIDs = map[string]bool{"mailru": true, "cupsonline": true}
+var dynamicIDs = map[string]bool{"mailru": true, "cupsonline": true, "bitrix": true, "pruffme": true}
 
 type catalogEntry struct {
 	ID     string `json:"id"`
@@ -255,6 +255,18 @@ func recordOverlayFailure(dir, id, version string) {
 		utils.Infof("[SCRIPTS] %s rolled back to the previous version", id)
 	}
 	os.Remove(failsPath(dir, id))
+}
+
+// packageOnlyTransport builds the transport for an id this core has no built-in implementation of: the installed dynamic package is the only carrier, so a missing one is an error the user can act on (refresh the transport catalog in the settings).
+func packageOnlyTransport(cfg Config, id string) (transport.Transport, error) {
+	if cfg.E2EEncryption {
+		return nil, fmt.Errorf("the %s transport doesn't support e2e_encryption", id)
+	}
+	st := overlayScript(cfg, id)
+	if st == nil {
+		return nil, fmt.Errorf("the %s transport is not installed: refresh the transport catalog in the settings", id)
+	}
+	return st, nil
 }
 
 func jsonErr(err error) string {

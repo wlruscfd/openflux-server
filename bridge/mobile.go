@@ -376,6 +376,11 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 			return nil, fmt.Errorf("doc_url is required")
 		}
 		return wrapGeneric(mts.NewTransport(cfg.DocURL, transportConfig), cfg), nil
+	case "bitrix", "pruffme":
+		if cfg.DocURL == "" {
+			return nil, fmt.Errorf("doc_url is required")
+		}
+		return packageOnlyTransport(cfg, t)
 	case "cupsonline":
 		if cfg.DocURL == "" {
 			return nil, fmt.Errorf("doc_url is required")

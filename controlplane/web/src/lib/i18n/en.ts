@@ -106,6 +106,10 @@ export const en: Dict = {
 	'keys.docUrlPhCups': 'WyI0OTdkZDBmZC01MGMy…',
 	'keys.docUrlAvito': 'avito room list (base64)',
 	'keys.docUrlPhAvito': 'WyJyb29tLTEi…',
+	'keys.docUrlBitrix': 'Bitrix24 board link',
+	'keys.docUrlPhBitrix': 'https://…bitrix24.ru/docs/…',
+	'keys.docUrlPruffme': 'PRUFFME whiteboard link',
+	'keys.docUrlPhPruffme': 'https://…pruffme.com/…',
 	'keys.docUrlDirect': 'Link (direct transport needs none)',
 	'keys.docUrlPhDirect': '(not used by direct)',
 

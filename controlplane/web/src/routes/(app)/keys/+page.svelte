@@ -117,6 +117,8 @@
 		telemost: 'keys.docUrlTelemost',
 		cupsonline: 'keys.docUrlCups',
 		avito: 'keys.docUrlAvito',
+		bitrix: 'keys.docUrlBitrix',
+		pruffme: 'keys.docUrlPruffme',
 		direct: 'keys.docUrlDirect'
 	};
 	const docPlaceholder: Record<string, string> = {
@@ -129,6 +131,8 @@
 		telemost: 'keys.docUrlPhTelemost',
 		cupsonline: 'keys.docUrlPhCups',
 		avito: 'keys.docUrlPhAvito',
+		bitrix: 'keys.docUrlPhBitrix',
+		pruffme: 'keys.docUrlPhPruffme',
 		direct: 'keys.docUrlPhDirect'
 	};
 	const docLabelFor = (tr: string) => t(docLabel[tr] ?? 'keys.docUrlGeneric');
@@ -484,6 +488,8 @@
 					<option value="telemost">telemost</option>
 					<option value="cupsonline">cupsonline</option>
 					<option value="avito">avito</option>
+					<option value="bitrix">bitrix</option>
+					<option value="pruffme">pruffme</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>
@@ -678,6 +684,8 @@
 					<option value="telemost">telemost</option>
 					<option value="cupsonline">cupsonline</option>
 					<option value="avito">avito</option>
+					<option value="bitrix">bitrix</option>
+					<option value="pruffme">pruffme</option>
 					<option value="direct">direct</option>
 				</select>
 			</label>

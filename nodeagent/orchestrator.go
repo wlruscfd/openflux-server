@@ -397,8 +397,8 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
-		if k.Transport != "yandex" && k.Transport != "yandex_multistream" && k.Transport != "boards" && k.Transport != "mailru" && k.Transport != "mts" && k.Transport != "telemost" && k.Transport != "cupsonline" && k.Transport != "avito" {
-			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline/avito transports today", id)
+		if !managedTransportSupported(k.Transport) {
+			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline/avito/bitrix/pruffme transports today", id)
 			continue
 		}
 		if k.Transport == "yandex_multistream" && len(k.DocURLs) < 2 {
@@ -654,6 +654,21 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		trans = transport.NewBatchedTransport(cupsonline.NewCupsonlineTransport(k.DocURL, transport.DefaultConfig(), false))
 		o.publishRoomLists(trans, k)
+	case "bitrix", "pruffme":
+		if k.E2EEncryption {
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, fmt.Errorf("key %s: the %s transport doesn't support e2e_encryption yet", k.ID, k.Transport)
+		}
+		var scriptErr error
+		trans, scriptErr = newScriptTransport(k.Transport, k.DocURL)
+		if scriptErr != nil {
+			if portIdx >= 0 {
+				o.ports.release(portIdx)
+			}
+			return nil, scriptErr
+		}
 	case "avito":
 		if k.E2EEncryption {
 			if portIdx >= 0 {
