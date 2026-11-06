@@ -121,6 +121,7 @@
 		cupsonline: 'keys.docUrlCups',
 		avito: 'keys.docUrlAvito',
 		bitrix: 'keys.docUrlBitrix',
+		'bitrix-call': 'keys.docUrlBitrixCall',
 		pruffme: 'keys.docUrlPruffme',
 		direct: 'keys.docUrlDirect'
 	};
@@ -135,6 +136,7 @@
 		cupsonline: 'keys.docUrlPhCups',
 		avito: 'keys.docUrlPhAvito',
 		bitrix: 'keys.docUrlPhBitrix',
+		'bitrix-call': 'keys.docUrlPhBitrixCall',
 		pruffme: 'keys.docUrlPhPruffme',
 		direct: 'keys.docUrlPhDirect'
 	};
@@ -503,6 +505,7 @@
 					<option value="cupsonline">cupsonline</option>
 					<option value="avito">avito</option>
 					<option value="bitrix">bitrix</option>
+					<option value="bitrix-call">bitrix-call</option>
 					<option value="pruffme">pruffme</option>
 					<option value="direct">direct</option>
 				</select>
@@ -727,6 +730,7 @@
 					<option value="cupsonline">cupsonline</option>
 					<option value="avito">avito</option>
 					<option value="bitrix">bitrix</option>
+					<option value="bitrix-call">bitrix-call</option>
 					<option value="pruffme">pruffme</option>
 					<option value="direct">direct</option>
 				</select>

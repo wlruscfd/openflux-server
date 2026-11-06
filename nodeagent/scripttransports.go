@@ -18,13 +18,17 @@ var bitrixFlux []byte
 //go:embed scriptpkgs/pruffme.flux
 var pruffmeFlux []byte
 
+//go:embed scriptpkgs/bitrix-call.flux
+var bitrixCallFlux []byte
+
 // managedScriptPkgs maps the panel's transport name to the signed package the
 // node runs that key with. The packages are verified against the fork's
 // transports key on every start (script.New fails closed), so a swapped file
 // on disk cannot run.
 var managedScriptPkgs = map[string][]byte{
-	"bitrix":  bitrixFlux,
-	"pruffme": pruffmeFlux,
+	"bitrix":       bitrixFlux,
+	"pruffme":      pruffmeFlux,
+	"bitrix-call":  bitrixCallFlux,
 }
 
 func managedTransportSupported(name string) bool {
@@ -61,7 +65,7 @@ func scriptPkgPath(name string, data []byte) (string, error) {
 // newScriptTransport starts a managed key's carrier from the embedded signed
 // package. The script gets the key's doc_url as cfg.url and the exit role; its
 // own settings (info().params) are covered by the panel's doc_url.
-func newScriptTransport(name, docURL string) (transport.Transport, error) {
+func newScriptTransport(name, docURL, session string) (transport.Transport, error) {
 	data, ok := managedScriptPkgs[name]
 	if !ok {
 		return nil, fmt.Errorf("no script package for the %s transport", name)
@@ -71,8 +75,9 @@ func newScriptTransport(name, docURL string) (transport.Transport, error) {
 		return nil, err
 	}
 	return registry.New("script", docURL, map[string]interface{}{
-		"path":   path,
-		"pubkey": script.ForkKeyHex,
-		"name":   name,
+		"path":    path,
+		"pubkey":  script.ForkKeyHex,
+		"name":    name,
+		"tokens":  session,
 	}, registry.Options{Base: transport.DefaultConfig(), IsExit: true})
 }

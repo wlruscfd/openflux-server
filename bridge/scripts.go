@@ -32,7 +32,7 @@ const (
 // built-in implementation; packageOnlyIDs are the script-only ones with no
 // built-in carrier, and the catalog may list more of both for newer apps.
 var overlayIDs = map[string]bool{"mailru": true, "cupsonline": true}
-var packageOnlyIDs = map[string]bool{"bitrix": true, "pruffme": true}
+var packageOnlyIDs = map[string]bool{"bitrix": true, "pruffme": true, "bitrix-call": true}
 
 var validIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 

@@ -124,6 +124,8 @@ export const ru = {
 	'keys.docUrlAvito': 'Список комнат avito (base64)',
 	'keys.docUrlPhAvito': 'WyJyb29tLTEi…',
 	'keys.docUrlBitrix': 'Ссылка на доску Bitrix24',
+	'keys.docUrlBitrixCall': 'Ссылка на видеоконференцию Bitrix24',
+	'keys.docUrlPhBitrixCall': 'https://…bitrix24.ru/video/…',
 	'keys.docUrlPhBitrix': 'https://…bitrix24.ru/docs/…',
 	'keys.docUrlPruffme': 'Ссылка на доску PRUFFME',
 	'keys.docUrlPhPruffme': 'https://…pruffme.com/…',

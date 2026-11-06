@@ -131,6 +131,8 @@ type Orchestrator struct {
 	proxy          *outbound.Manager
 	proxyInstalled bool
 
+	keySession map[string]string
+
 	lastPollOK atomic.Int64
 }
 
@@ -270,6 +272,14 @@ func (o *Orchestrator) applyCookies(ctx context.Context) {
 			byKey[j.KeyID] = j
 		}
 	}
+	o.mu.Lock()
+	if o.keySession == nil {
+		o.keySession = map[string]string{}
+	}
+	for id, j := range byKey {
+		o.keySession[id] = j.Cookies
+	}
+	o.mu.Unlock()
 	o.applyCookiesWith(byKey)
 }
 
@@ -315,6 +325,14 @@ func (o *Orchestrator) applyCookiesWith(byKey map[string]RemoteKeyCookie) {
 		o.mu.Unlock()
 		if !stillActive || current != t.w {
 			utils.Debugf("[NODEAGENT] worker for key %s no longer active, dropping uploaded cookies", t.id)
+			continue
+		}
+		if _, isScript := managedScriptPkgs[t.w.transportName]; isScript {
+			log.Printf("[NODEAGENT] key %s (%s): restarting with the uploaded session material (%d bytes)", t.id, t.w.transportName, len(t.jar))
+			o.mu.Lock()
+			delete(o.workers, t.id)
+			o.mu.Unlock()
+			o.stopWorker(t.w)
 			continue
 		}
 		provider, ok := t.w.trans.(cookieProvider)
@@ -731,15 +749,18 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		}
 		trans = transport.NewBatchedTransport(cupsonline.NewCupsonlineTransport(k.DocURL, transport.DefaultConfig(), false))
 		o.publishRoomLists(trans, k)
-	case "bitrix", "pruffme":
+	case "bitrix", "pruffme", "bitrix-call":
 		if k.E2EEncryption {
 			if portIdx >= 0 {
 				o.ports.release(portIdx)
 			}
 			return nil, fmt.Errorf("key %s: the %s transport doesn't support e2e_encryption yet", k.ID, k.Transport)
 		}
+		o.mu.Lock()
+		session := o.keySession[k.ID]
+		o.mu.Unlock()
 		var scriptErr error
-		trans, scriptErr = newScriptTransport(k.Transport, k.DocURL)
+		trans, scriptErr = newScriptTransport(k.Transport, k.DocURL, session)
 		if scriptErr != nil {
 			if portIdx >= 0 {
 				o.ports.release(portIdx)

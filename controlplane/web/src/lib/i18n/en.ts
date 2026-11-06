@@ -126,6 +126,8 @@ export const en: Dict = {
 	'keys.docUrlAvito': 'avito room list (base64)',
 	'keys.docUrlPhAvito': 'WyJyb29tLTEi…',
 	'keys.docUrlBitrix': 'Bitrix24 board link',
+	'keys.docUrlBitrixCall': 'Bitrix24 video conference link',
+	'keys.docUrlPhBitrixCall': 'https://…bitrix24.ru/video/…',
 	'keys.docUrlPhBitrix': 'https://…bitrix24.ru/docs/…',
 	'keys.docUrlPruffme': 'PRUFFME whiteboard link',
 	'keys.docUrlPhPruffme': 'https://…pruffme.com/…',

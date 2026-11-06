@@ -17,13 +17,13 @@ func TestManagedTransportSupported(t *testing.T) {
 
 func TestNewScriptTransportVerifiesAndBuilds(t *testing.T) {
 	for _, name := range []string{"bitrix", "pruffme"} {
-		tr, err := newScriptTransport(name, "https://example.com/board")
+		tr, err := newScriptTransport(name, "https://example.com/board", "")
 		if err != nil {
 			t.Fatalf("%s: newScriptTransport: %v", name, err)
 		}
 		tr.Stop()
 	}
-	if _, err := newScriptTransport("vkteams", "https://example.com"); err == nil {
+	if _, err := newScriptTransport("vkteams", "https://example.com", ""); err == nil {
 		t.Fatal("vkteams: expected an error, the node ships no package for it")
 	}
 }
