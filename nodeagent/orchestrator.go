@@ -127,15 +127,11 @@ type Orchestrator struct {
 	warpMu sync.Mutex
 	warps  map[string]*warp.Tunnel
 
-proxyMu        sync.Mutex
+	proxyMu        sync.Mutex
 	proxy          *outbound.Manager
 	proxyInstalled bool
 
 	lastPollOK atomic.Int64
-
-	proxyMu        sync.Mutex
-	proxy          *outbound.Manager
-	proxyInstalled bool
 }
 
 // Healthy says whether this process has reached the control plane and fetched its keys at least once.
