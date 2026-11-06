@@ -47,7 +47,10 @@ func (o SidecarOptions) withDefaults() SidecarOptions {
 		o.PortLow = 41000
 	}
 	if o.PortHigh == 0 {
-		o.PortHigh = 41999
+		// The node opens one local listener per key it uses, so the range has to hold the
+		// whole set the node materializes. It was a thousand ports, which a handful of
+		// carriers with a few hundred keys each no longer fits in.
+		o.PortHigh = 48999
 	}
 	if o.LogLevel == "" {
 		o.LogLevel = "error"
@@ -64,16 +67,33 @@ func (o SidecarOptions) withDefaults() SidecarOptions {
 type Sidecar struct {
 	opts SidecarOptions
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	keys    []Key
-	dialers map[string]Dialer
-	finger  string
-	stopped bool
+	mu        sync.Mutex
+	segments      []*segment
+	dialers       map[string]Dialer
+	nextSeg       int
+	orphansKilled bool
+	reaping       bool
+	stopped   bool
+	startedAt time.Time
 }
 
 func NewSidecar(opts SidecarOptions) *Sidecar {
 	return &Sidecar{opts: opts.withDefaults(), dialers: map[string]Dialer{}}
+}
+
+// Settling reports whether the sidecar was started so recently that its listeners
+// may not answer yet.
+//
+// The sidecar is rebuilt whenever the set of keys changes, and a check that runs
+// against a half-started sidecar fails every key at once. Skipping the check until
+// the listeners are up keeps one rebuild from condemning the whole set.
+func (s *Sidecar) Settling() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startedAt.IsZero() {
+		return false
+	}
+	return time.Since(s.startedAt) < 15*time.Second
 }
 
 func (s *Sidecar) DialerFor(keyID string) Dialer {
@@ -85,7 +105,7 @@ func (s *Sidecar) DialerFor(keyID string) Dialer {
 func (s *Sidecar) Running() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cmd != nil
+	return len(s.segments) > 0
 }
 
 func fingerprint(keys []Key) string {
@@ -96,103 +116,6 @@ func fingerprint(keys []Key) string {
 			k.SNI, k.Flow, k.Reality, k.PublicKey, k.ShortID)
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func (s *Sidecar) Apply(keys []Key) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.stopped {
-		return fmt.Errorf("sing-box sidecar is stopped")
-	}
-	// A public key list is thousands of entries and some are broken. Refusing the whole batch over
-	// one bad link takes every good key down with it, so unusable ones are dropped here and the
-	// rest are still served.
-	usable := keys[:0]
-	var dropped []string
-	for _, k := range keys {
-		if err := k.Valid(); err != nil {
-			dropped = append(dropped, fmt.Sprintf("%s: %v", k.Label(), err))
-			continue
-		}
-		usable = append(usable, k)
-	}
-	keys = usable
-	for _, d := range dropped {
-		if skippedInLog < 20 {
-			utils.Debugf("[OUTBOUND] proxy key dropped: %s", d)
-		}
-		skippedInLog++
-	}
-	if len(keys) == 0 {
-		return fmt.Errorf("none of the %d proxy keys are usable", len(dropped))
-	}
-	fp := fingerprint(keys)
-	if fp == s.finger && s.cmd != nil {
-		return nil
-	}
-	ports, err := s.allocatePorts(len(keys))
-	if err != nil {
-		return err
-	}
-	byID := make(map[string]int, len(keys))
-	for _, k := range keys {
-		byID[k.ID] = ports[len(byID)]
-	}
-	config, err := buildSingboxConfig(keys, byID, s.opts.LogLevel)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(s.opts.WorkDir, 0o700); err != nil {
-		return err
-	}
-	path := filepath.Join(s.opts.WorkDir, "config.json")
-	if err := os.WriteFile(path, config, 0o600); err != nil {
-		return err
-	}
-	// sing-box validates a whole config or nothing: one link carrying a field this build has never
-	// heard of - a flow variant, an unknown transport - would take every other key down with it.
-	// Checking first keeps one odd entry from costing the node its tunnel.
-	keys, err = s.dropKeysRefusedBySingbox(keys, path)
-	if err != nil {
-		return err
-	}
-	if len(keys) == 0 {
-		return fmt.Errorf("sing-box refused every proxy key in this batch")
-	}
-	keptPorts := make(map[string]int, len(keys))
-	for _, k := range keys {
-		keptPorts[k.ID] = byID[k.ID]
-	}
-	byID = keptPorts
-	config, err = buildSingboxConfig(keys, byID, s.opts.LogLevel)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, config, 0o600); err != nil {
-		return err
-	}
-	dialers := make(map[string]Dialer, len(keys))
-	for _, k := range keys {
-		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(byID[k.ID]))
-		dialers[k.ID] = newSocksDialer(addr, directDialer{}, 15*time.Second)
-	}
-	s.stopProcessLocked()
-	s.killOrphan()
-	cmd := exec.Command(s.opts.Binary, "run", "-c", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = processAttributes()
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start sing-box: %w", err)
-	}
-	s.writePIDFileLocked(cmd.Process.Pid)
-	if err := waitPorts(byID, s.opts.StartWait); err != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		return err
-	}
-	s.cmd, s.keys, s.dialers, s.finger = cmd, keys, dialers, fp
-	return nil
 }
 
 // dropKeysRefusedBySingbox asks sing-box itself which keys it will accept. The full config is tried
@@ -237,31 +160,6 @@ func (s *Sidecar) checkConfig(path string) error {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func (s *Sidecar) Stop() {
-	s.mu.Lock()
-	s.stopped = true
-	s.stopProcessLocked()
-	s.finger = ""
-}
-
-func (s *Sidecar) stopProcessLocked() {
-	cmd := s.cmd
-	s.cmd = nil
-	if cmd == nil || cmd.Process == nil {
-		return
-	}
-	_ = cmd.Process.Signal(terminateSignal())
-	done := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(s.opts.StopGrace):
-		_ = cmd.Process.Kill()
-		<-done
-	}
-	s.clearPIDFileLocked()
 }
 
 func (s *Sidecar) pidFile() string { return filepath.Join(s.opts.WorkDir, "sing-box.pid") }
@@ -367,6 +265,17 @@ type singboxConfig struct {
 	Log       singboxLog        `json:"log"`
 	Inbounds  []json.RawMessage `json:"inbounds"`
 	Outbounds []json.RawMessage `json:"outbounds"`
+	Route     *singboxRoute     `json:"route,omitempty"`
+}
+
+type singboxRoute struct {
+	Rules []singboxRouteRule `json:"rules"`
+	Final string             `json:"final"`
+}
+
+type singboxRouteRule struct {
+	Inbound  []string `json:"inbound"`
+	Outbound string   `json:"outbound"`
 }
 
 type singboxLog struct {
@@ -483,6 +392,57 @@ func singboxOutbound(k Key, tag string) (json.RawMessage, error) {
 			"server": k.Server, "server_port": k.Port,
 			"password": k.Password, "tls": tls,
 		})
+	case KindVMess:
+		entry := map[string]any{
+			"type": "vmess", "tag": tag,
+			"server": k.Server, "server_port": k.Port,
+			"uuid": k.UUID, "alter_id": 0, "security": firstNonEmpty(k.Mode, "auto"),
+		}
+		if tr, ok := singboxTransport(k); ok {
+			entry["transport"] = tr
+		}
+		if k.NoTLS {
+			return json.Marshal(entry)
+		}
+		tls := map[string]any{"enabled": true}
+		if k.SNI != "" {
+			tls["server_name"] = k.SNI
+		}
+		if len(k.ALPN) > 0 {
+			tls["alpn"] = k.ALPN
+		}
+		if k.Insecure {
+			tls["insecure"] = true
+		}
+		if k.Fingerprint != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": k.Fingerprint}
+		}
+		entry["tls"] = tls
+		return json.Marshal(entry)
+	case KindTrojan:
+		entry := map[string]any{
+			"type": "trojan", "tag": tag,
+			"server": k.Server, "server_port": k.Port,
+			"password": k.Password,
+		}
+		if tr, ok := singboxTransport(k); ok {
+			entry["transport"] = tr
+		}
+		tls := map[string]any{"enabled": true}
+		if k.SNI != "" {
+			tls["server_name"] = k.SNI
+		}
+		if len(k.ALPN) > 0 {
+			tls["alpn"] = k.ALPN
+		}
+		if k.Insecure {
+			tls["insecure"] = true
+		}
+		if k.Fingerprint != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": k.Fingerprint}
+		}
+		entry["tls"] = tls
+		return json.Marshal(entry)
 	default:
 		return nil, fmt.Errorf("sing-box: unsupported key kind %q", k.Kind)
 	}
@@ -490,6 +450,7 @@ func singboxOutbound(k Key, tag string) (json.RawMessage, error) {
 
 func buildSingboxConfig(keys []Key, ports map[string]int, logLevel string) ([]byte, error) {
 	cfg := singboxConfig{Log: singboxLog{Level: logLevel, Timestamp: true}}
+	route := &singboxRoute{Final: "direct"}
 	for i, k := range keys {
 		tag := keyTag(i)
 		out, err := singboxOutbound(k, tag)
@@ -511,12 +472,21 @@ func buildSingboxConfig(keys []Key, ports map[string]int, logLevel string) ([]by
 		}
 		cfg.Outbounds = append(cfg.Outbounds, out)
 		cfg.Inbounds = append(cfg.Inbounds, in)
+		// Each listener has to be bound to its own outbound. Without the rule sing-box sends
+		// everything that arrives on any of them out through the first outbound in the list,
+		// so every key looked like the first one: the fleet appeared to be a single dead
+		// address, and the rest of the keys were never used at all.
+		route.Rules = append(route.Rules, singboxRouteRule{
+			Inbound:  []string{tag + "-in"},
+			Outbound: tag,
+		})
 	}
 	direct, err := json.Marshal(map[string]any{"type": "direct", "tag": "direct"})
 	if err != nil {
 		return nil, err
 	}
 	cfg.Outbounds = append(cfg.Outbounds, direct)
+	cfg.Route = route
 	return json.MarshalIndent(cfg, "", "  ")
 }
 

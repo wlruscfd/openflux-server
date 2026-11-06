@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
@@ -16,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"strconv"
 
 	"github.com/gorilla/websocket"
 
@@ -27,7 +30,7 @@ var baseURL = "https://code.avito.ru"
 
 const (
 	avitoHost   = "code.avito.ru"
-	avitoUA     = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+	avitoUA     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 	shareDBType = "http://sharejs.org/types/textv1"
 	roomBudget  = 16
 	maxRooms    = 4
@@ -103,6 +106,7 @@ var (
 	errNoRoom   = errors.New("avito: no connected room")
 	errStopped  = errors.New("avito: transport stopped")
 	errAuth     = errors.New("avito: cookies rejected")
+	errNoCookie = errors.New("avito: this key has no cookies yet")
 )
 
 func short(id string) string {
@@ -116,7 +120,8 @@ func jittered(d time.Duration) time.Duration {
 	return d + time.Duration(rand.Int63n(int64(d/4)+1))
 }
 
-func createRoom(ctx context.Context, cookies string) (string, error) {
+func createRoom(ctx context.Context, cookies string, slot int) (string, error) {
+	ctx = transport.WithDialHint(ctx, transport.DialHint{Subject: fmt.Sprintf("room-%d", slot), Spread: true})
 	jar, _ := cookiejar.New(nil)
 	u, _ := url.Parse(baseURL)
 	parseCookiesInto(jar, u, cookies)
@@ -134,8 +139,15 @@ func createRoom(ctx context.Context, cookies string) (string, error) {
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("%w: status %d", errAuth, resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		// A 403 here is the provider refusing the address, not the cookies: the same
+		// request without any cookies is refused the same way. Saying "the cookies were
+		// rejected" sends the operator to paste new cookies for a cookie that was never
+		// the problem.
+		return "", fmt.Errorf("%w: the provider refused this address (403); the cookies may be fine", errAuth)
 	}
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("POST room status %d: %s", resp.StatusCode, truncate(body, 200))
@@ -218,6 +230,9 @@ func (w *avitoWS) dial() (*websocket.Conn, error) {
 	header.Set("Origin", baseURL)
 	header.Set("Cookie", w.cookieHeader())
 
+	if !waitWSPause(w.ctx.Done()) {
+		return nil, errStopped
+	}
 	if !transport.WaitHostSlot(avitoHost, w.ctx.Done()) {
 		return nil, errStopped
 	}
@@ -227,11 +242,27 @@ func (w *avitoWS) dial() (*websocket.Conn, error) {
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,
 	}
-	conn, _, err := dialer.DialContext(w.ctx, wsURL, header)
+	conn, resp, err := dialer.DialContext(w.ctx, wsURL, header)
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+			after := 60 * time.Second
+			if s, perr := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); perr == nil && s > 0 {
+				after = time.Duration(s) * time.Second
+			}
+			noteWSThrottle(after)
+			return nil, &throttledError{after: after}
+		}
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 	return conn, nil
+}
+
+// throttledError is the provider asking this address to wait before the next connection. Retrying
+// on the ordinary short delay only keeps the limit alive and starves every room of the key.
+type throttledError struct{ after time.Duration }
+
+func (e *throttledError) Error() string {
+	return fmt.Sprintf("dial: the provider asked to wait %s (429)", e.after)
 }
 
 func (w *avitoWS) writeJSON(v interface{}) error {
@@ -332,6 +363,13 @@ func (w *avitoWS) run() {
 		w.stats.reconnects.Add(1)
 		if time.Since(started) >= w.config.HealthyAfter {
 			delay = w.config.ReconnectMinDelay
+		}
+		var throttled *throttledError
+		if errors.As(err, &throttled) {
+			continue
+		}
+		if w.stats.reconnects.Load() <= 3 {
+			utils.Infof("[AVITO] room %s: connection failed: %v", short(w.roomID), err)
 		}
 		if !sleepCtx(w.ctx, jittered(delay)) {
 			return
@@ -681,6 +719,9 @@ func (t *AvitoTransport) enterRooms() ([]string, error) {
 		return nil, fmt.Errorf("avito client: the url must contain the room list")
 	}
 
+	if t.currentCookies() == "" {
+		return nil, errNoCookie
+	}
 	total := t.config.NumRooms * 2
 	ids := make([]string, 0, total)
 	for i := 0; i < total; i++ {
@@ -689,29 +730,43 @@ func (t *AvitoTransport) enterRooms() ([]string, error) {
 		}
 		var roomID string
 		var lastErr error
-		for attempt := 0; attempt < 5; attempt++ {
-			roomID, lastErr = createRoom(t.ctx, t.currentCookies())
-			if lastErr == nil || errors.Is(lastErr, errAuth) || errors.Is(lastErr, errStopped) {
+		for attempt := 0; attempt < 4; attempt++ {
+			roomID, lastErr = createRoom(t.ctx, t.currentCookies(), i)
+			if lastErr == nil || errors.Is(lastErr, errStopped) {
+				break
+			}
+			if errors.Is(lastErr, errAuth) {
+				// A 403 from the edge is a throttle far more often than it is a bad cookie,
+				// and the throttle window is minutes long. Hammering it keeps the ban alive,
+				// so this attempt stops here; the node retries the key later, and the proxy
+				// rotation below moves the next attempt to another address.
+				transport.ReportDial(transport.WithDialHint(t.ctx, transport.DialHint{Subject: fmt.Sprintf("room-%d", i)}), lastErr)
 				break
 			}
 			wait := t.config.RoomCreatePause * time.Duration(1<<uint(attempt))
 			if wait > 15*time.Second {
 				wait = 15 * time.Second
 			}
-			utils.Debugf("[AVITO] room %d attempt %d failed: %v (wait %v)", i+1, attempt+1, lastErr, wait)
+			if wait > 5*time.Minute {
+				wait = 5 * time.Minute
+			}
+			log.Printf("[AVITO] room %d attempt %d failed: %v (wait %v)", i+1, attempt+1, lastErr, wait)
 			if !sleepCtx(t.ctx, jittered(wait)) {
 				return nil, errStopped
 			}
 		}
-		if errors.Is(lastErr, errAuth) || errors.Is(lastErr, errStopped) {
+		if errors.Is(lastErr, errStopped) {
 			return nil, lastErr
 		}
 		if roomID == "" {
-			utils.Debugf("[AVITO] room %d skipped: %v", i+1, lastErr)
-			continue
+			if len(ids) > 0 {
+				log.Printf("[AVITO] room %d failed (%v), continuing with the %d room(s) already open", i+1, lastErr, len(ids))
+				break
+			}
+			return nil, lastErr
 		}
 		ids = append(ids, roomID)
-		utils.Debugf("[AVITO] created room %d/%d: %s", i+1, total, short(roomID))
+		log.Printf("[AVITO] created room %d/%d: %s", i+1, total, short(roomID))
 		if i < total-1 {
 			if !sleepCtx(t.ctx, t.config.RoomCreatePause) {
 				return nil, errStopped
@@ -861,7 +916,7 @@ func CreateRoomList(ctx context.Context, cookies string) (string, error) {
 	total := cfg.NumRooms * 2
 	ids := make([]string, 0, total)
 	for i := 0; i < total; i++ {
-		id, err := createRoom(ctx, cookies)
+		id, err := createRoom(ctx, cookies, i)
 		if err != nil {
 			if len(ids) > 0 {
 				break
@@ -897,7 +952,17 @@ func (t *AvitoTransport) ApplyCookies(values map[string]string) error {
 	for k, v := range values {
 		parts = append(parts, k+"="+v)
 	}
-	joined := strings.Join(parts, "; ")
+	t.setCookies(strings.Join(parts, "; "))
+	return nil
+}
+
+func (t *AvitoTransport) ProvideCookies(raw string) {
+	if raw = strings.TrimSpace(raw); raw != "" {
+		t.setCookies(raw)
+	}
+}
+
+func (t *AvitoTransport) setCookies(joined string) {
 	t.cookiesMu.Lock()
 	t.cookies = joined
 	t.cookiesMu.Unlock()
@@ -909,7 +974,6 @@ func (t *AvitoTransport) ApplyCookies(values map[string]string) error {
 		}
 		ws.writeMu.Unlock()
 	}
-	return nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

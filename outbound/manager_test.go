@@ -17,6 +17,13 @@ type fakeSidecar struct {
 	applied  []Key
 	stopped  bool
 	applyErr error
+	settling bool
+}
+
+func (f *fakeSidecar) Settling() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.settling
 }
 
 func (f *fakeSidecar) Apply(keys []Key) error {
@@ -86,8 +93,8 @@ func TestManagerCapsKeysPerCarrier(t *testing.T) {
 	f := &fakeSidecar{}
 	m := managerWith(f)
 	m.LoadCarrierHosts()
-	keys := make([]Key, 0, 200)
-	for i := 0; i < 200; i++ {
+	keys := make([]Key, 0, MaxKeysPerCarrier+50)
+	for i := 0; i < MaxKeysPerCarrier+50; i++ {
 		keys = append(keys, testKey(fmt.Sprintf("k%d", i), fmt.Sprintf("key-%d", i), "a.example"))
 	}
 	if err := m.Apply(map[string][]Key{"yandex": keys}); err != nil {

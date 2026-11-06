@@ -184,11 +184,63 @@ func indexOf(s, sub string) int {
 }
 
 func TestParseRejectsUnknownScheme(t *testing.T) {
-	if _, err := ParseLink("trojan://a@b:1"); err == nil {
-		t.Fatal("trojan links are not supported")
+	if _, err := ParseLink("ssr://a@b:1"); err == nil {
+		t.Fatal("ssr links are not supported")
 	}
 	if _, err := ParseLink(""); err == nil {
 		t.Fatal("empty link must fail")
+	}
+}
+
+func TestParseReadsVMessAndTrojan(t *testing.T) {
+	vmess := "vmess://" + base64.StdEncoding.EncodeToString([]byte(
+		`{"v":"2","ps":"node-a","add":"example.com","port":"443","id":"11111111-2222-3333-4444-555555555555",`+
+			`"aid":0,"scy":"auto","net":"ws","type":"none","host":"cdn.example.com","path":"/ray","tls":"tls","sni":"cdn.example.com"}`))
+	k, err := ParseLink(vmess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k.Kind != KindVMess || k.Server != "example.com" || k.Port != 443 {
+		t.Fatalf("vmess: %+v", k)
+	}
+	if k.UUID != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("vmess uuid: %q", k.UUID)
+	}
+	if k.TransportType != "ws" || k.Path != "/ray" || k.Host != "cdn.example.com" {
+		t.Fatalf("vmess transport: %+v", k)
+	}
+	if k.NoTLS {
+		t.Fatal("vmess link with tls must not be plain")
+	}
+	if err := k.Valid(); err != nil {
+		t.Fatal(err)
+	}
+
+	trojan, err := ParseLink("trojan://secret@example.com:8443?sni=example.com&type=ws&path=%2Ftr&allowInsecure=1#node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trojan.Kind != KindTrojan || trojan.Password != "secret" || trojan.Server != "example.com" || trojan.Port != 8443 {
+		t.Fatalf("trojan: %+v", trojan)
+	}
+	if trojan.SNI != "example.com" || trojan.TransportType != "ws" || trojan.Path != "/tr" || !trojan.Insecure {
+		t.Fatalf("trojan options: %+v", trojan)
+	}
+	if err := trojan.Valid(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseReadsShadowsocksSIP002(t *testing.T) {
+	k, err := ParseLink("ss://2022-blake3-aes-256-gcm:AbCd+/123==@example.com:8388#node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k.Kind != KindShadowsocks || k.Method != "2022-blake3-aes-256-gcm" || k.Password != "AbCd+/123==" {
+		t.Fatalf("shadowsocks: %+v", k)
+	}
+	if k.Server != "example.com" || k.Port != 8388 {
+		t.Fatalf("shadowsocks endpoint: %+v", k)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/p1neappleXpress/OpenFlux/netbind"
@@ -19,8 +20,70 @@ var (
 	dialDirect = netbind.Wrap(ProtectedDialer())
 )
 
-func SetDialHook(h DialHook) {
-	dialHookMu.Lock()
+type DialHint struct {
+	Subject string
+	Spread  bool
+}
+
+type dialHintKey struct{}
+
+func WithDialHint(ctx context.Context, h DialHint) context.Context {
+	return context.WithValue(ctx, dialHintKey{}, h)
+}
+
+func DialHintFrom(ctx context.Context) (DialHint, bool) {
+	h, ok := ctx.Value(dialHintKey{}).(DialHint)
+	return h, ok && h.Subject != ""
+}
+
+type DialFeedback func(subject string, err error)
+
+var dialFeedback atomic.Pointer[DialFeedback]
+
+func SetDialFeedback(f DialFeedback) {
+	if f == nil {
+		dialFeedback.Store(nil)
+		return
+	}
+	dialFeedback.Store(&f)
+}
+
+func ReportDial(ctx context.Context, err error) {
+	h, ok := DialHintFrom(ctx)
+	if !ok || err == nil {
+		return
+	}
+	if f := dialFeedback.Load(); f != nil {
+		(*f)(h.Subject, err)
+	}
+}
+
+// RegisterCarrierHost tells the dialer that a host belongs to a carrier.
+//
+// A transport learns some of its hosts while it runs: a board says which host
+// serves its documents, and that host is not in the table anyone wrote down.
+// Without this the request leaves straight from the node's own address, which
+// is the address the provider blocks.
+func RegisterCarrierHost(carrierType, host string) {
+	hostRegistrarMu.RLock()
+	fn := hostRegistrar
+	hostRegistrarMu.RUnlock()
+	if fn != nil {
+		fn(carrierType, host)
+	}
+}
+
+var hostRegistrarMu sync.RWMutex
+var hostRegistrar func(carrierType, host string)
+
+// SetHostRegistrar installs the function that remembers a host for a carrier.
+func SetHostRegistrar(fn func(carrierType, host string)) {
+	hostRegistrarMu.Lock()
+	hostRegistrar = fn
+	hostRegistrarMu.Unlock()
+}
+
+func SetDialHook(h DialHook) {	dialHookMu.Lock()
 	defer dialHookMu.Unlock()
 	dialHook = h
 }

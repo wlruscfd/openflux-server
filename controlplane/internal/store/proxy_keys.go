@@ -19,6 +19,11 @@ type ProxyKey struct {
 	Port            int
 	Priority        int
 	Enabled         bool
+	LinkHash        []byte
+	State           string
+	StateCheckedAt  *time.Time
+	StateLatencyMS  *int
+	StateError      string
 	CreatedAt       time.Time
 	Carriers        []string
 	AssignmentCount int
@@ -47,6 +52,111 @@ func (s *Store) CreateProxyKey(ctx context.Context, p ProxyKey) (ProxyKey, error
 		return ProxyKey{}, err
 	}
 	return p, nil
+}
+
+// CreateProxyKeys stores a whole list of keys in one round trip.
+//
+// A public list is thousands of links long, and one insert per link turns an import into
+// tens of thousands of round trips. The same link is met again in the next import, so the
+// hash of the link is what the row is keyed by: the link keeps its row and only gains the
+// carriers it did not have.
+func (s *Store) CreateProxyKeys(ctx context.Context, ps []ProxyKey) (int, error) {
+	if len(ps) == 0 {
+		return 0, nil
+	}
+	values := make([]string, 0, len(ps))
+	args := make([]any, 0, len(ps)*7)
+	for i, p := range ps {
+		base := i*8 + 1
+		values = append(values, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7))
+		args = append(args, p.Name, p.LinkEnc, p.Kind, p.Server, p.Port, p.Priority, p.Enabled, p.LinkHash)
+	}
+	q := `INSERT INTO proxy_keys (name, link_enc, kind, server, port, priority, enabled, link_hash)
+	      VALUES ` + joinRows(values) + `
+	      ON CONFLICT (link_hash) WHERE link_hash IS NOT NULL DO UPDATE SET
+	        priority = GREATEST(proxy_keys.priority, EXCLUDED.priority),
+	        updated_at = now()
+	      RETURNING id`
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("create proxy keys: %w", err)
+	}
+	ids := make([]string, 0, len(ps))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan proxy key id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("read proxy key ids: %w", err)
+	}
+
+	carrierValues := make([]string, 0, len(ps)*len(ps))
+	carrierArgs := make([]any, 0, len(ps)*2)
+	for i, id := range ids {
+		for _, c := range ps[i].Carriers {
+			carrierValues = append(carrierValues, fmt.Sprintf("($%d,$%d)", len(carrierArgs)+1, len(carrierArgs)+2))
+			carrierArgs = append(carrierArgs, id, c)
+		}
+	}
+	if len(carrierValues) > 0 {
+		cq := `INSERT INTO proxy_key_carriers (proxy_key_id, carrier) VALUES ` + joinRows(carrierValues) + ` ON CONFLICT DO NOTHING`
+		if _, err := s.pool.Exec(ctx, cq, carrierArgs...); err != nil {
+			return 0, fmt.Errorf("set proxy key carriers: %w", err)
+		}
+	}
+	return len(ids), nil
+}
+
+// SetProxyKeyState records what the node found when it last used a key.
+// SetKeyRoomState records what a node found for a key that makes its own rooms.
+//
+// A list replaces the one the key had: the rooms of a board that has closed are dead, and
+// the node creates new ones, so the client has to be given the new list or it opens dead
+// rooms forever. A report that is older than the list the key already has is ignored, so a
+// late report from a run that ended cannot point the key back at rooms that are gone.
+//
+// A failure does not touch the list: the client can still open the rooms the key had, and
+// the reason the new ones could not be made is what the panel shows.
+func (s *Store) SetKeyRoomState(ctx context.Context, keyID, state, failure, list string, reportedAt time.Time) (bool, error) {
+	if list != "" {
+		tag, err := s.pool.Exec(ctx, `
+			UPDATE keys SET doc_url = $2, room_state = 'ready', room_state_at = now(),
+			       room_state_error = NULL, room_list_at = $3, updated_at = now()
+			WHERE id = $1 AND deleted_at IS NULL
+			  AND (doc_url = '' OR doc_url = $2 OR room_list_at IS NULL OR room_list_at <= $3)
+		`, keyID, list, reportedAt)
+		if err != nil {
+			return false, fmt.Errorf("set key doc url from node: %w", err)
+		}
+		return tag.RowsAffected() > 0, nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE keys SET room_state = $2, room_state_at = now(), room_state_error = NULLIF($3, ''),
+		       updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, keyID, state, failure)
+	if err != nil {
+		return false, fmt.Errorf("set key room state: %w", err)
+	}
+	return true, nil
+}
+
+func (s *Store) SetProxyKeyState(ctx context.Context, id, state string, latencyMS *int, failure string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE proxy_keys SET state = $2, state_checked_at = now(), state_latency_ms = $3,
+		       state_error = NULLIF($4, ''), updated_at = now()
+		WHERE id = $1
+	`, id, state, latencyMS, failure)
+	if err != nil {
+		return fmt.Errorf("set proxy key state: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) SetProxyKeyCarriers(ctx context.Context, id string, carriers []string) error {
@@ -92,7 +202,8 @@ func (s *Store) ListProxyKeys(ctx context.Context) ([]ProxyKey, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.id, p.name, p.kind, p.server, p.port, p.priority, p.enabled, p.created_at,
 		       COALESCE(array_agg(c.carrier) FILTER (WHERE c.carrier IS NOT NULL), '{}'),
-		       (SELECT count(*) FROM proxy_assignments a WHERE a.proxy_key_id = p.id)
+		       (SELECT count(*) FROM proxy_assignments a WHERE a.proxy_key_id = p.id),
+		       p.state, p.state_checked_at, p.state_latency_ms, COALESCE(p.state_error, '')
 		FROM proxy_keys p
 		LEFT JOIN proxy_key_carriers c ON c.proxy_key_id = p.id
 		GROUP BY p.id
@@ -106,7 +217,8 @@ func (s *Store) ListProxyKeys(ctx context.Context) ([]ProxyKey, error) {
 	for rows.Next() {
 		var p ProxyKey
 		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.Server, &p.Port, &p.Priority, &p.Enabled,
-			&p.CreatedAt, &p.Carriers, &p.AssignmentCount); err != nil {
+			&p.CreatedAt, &p.Carriers, &p.AssignmentCount,
+			&p.State, &p.StateCheckedAt, &p.StateLatencyMS, &p.StateError); err != nil {
 			return nil, fmt.Errorf("scan proxy key: %w", err)
 		}
 		out = append(out, p)
@@ -156,18 +268,82 @@ func (s *Store) DeleteProxyKey(ctx context.Context, id string) error {
 	return nil
 }
 
-// ListProxyKeysForNode hands a node every enabled key, each with the carriers it balances for. A key with no
-// carrier is not sent: the panel saves links before they are put to work, and a key nobody claims is not yet routing.
-func (s *Store) ListProxyKeysForNode(ctx context.Context) ([]NodeProxyKey, error) {
+// proxyKeyRotationWindow is how long the order of the unproven keys lasts before it shifts.
+// A node materializes a handful of them at a time, so a window that is too long leaves most
+// of the list untried for hours and one that is too short never finishes a check.
+const proxyKeyRotationWindow = 5 * time.Minute
+
+// ProxyKeyState is what a node found when it last checked one key.
+type ProxyKeyState struct {
+	ID        string
+	State     string
+	LatencyMS *int
+	Error     string
+}
+
+// SetProxyKeyStates records what the node found for a batch of keys in one round trip.
+//
+// A node checks every key it materialized, which is hundreds of them, and one update per key
+// would be hundreds of round trips for a report that is a few kilobytes.
+func (s *Store) SetProxyKeyStates(ctx context.Context, states []ProxyKeyState) error {
+	if len(states) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(states))
+	values := make([]string, 0, len(states))
+	latencies := make([]*int, 0, len(states))
+	errors := make([]string, 0, len(states))
+	for _, st := range states {
+		ids = append(ids, st.ID)
+		values = append(values, st.State)
+		latencies = append(latencies, st.LatencyMS)
+		errors = append(errors, st.Error)
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE proxy_keys p
+		SET state = s.state, state_checked_at = now(), state_latency_ms = s.latency,
+		    state_error = NULLIF(s.failure, ''), updated_at = now()
+		FROM unnest($1::uuid[], $2::text[], $3::int[], $4::text[])
+		     AS s(id, state, latency, failure)
+		WHERE p.id = s.id
+	`, ids, values, latencies, errors)
+	if err != nil {
+		return fmt.Errorf("set proxy key states: %w", err)
+	}
+	return nil
+}
+
+// ListProxyKeysForNode hands a node the enabled keys, each with the carriers it balances for.
+// A key with no carrier is not sent: the panel saves links before they are put to work, and a
+// key nobody claims is not yet routing.
+//
+// The list a node receives is bounded, and it rotates. A public proxy list runs to thousands of
+// links, almost all of them dead, and a node can only try the handful it materializes. The keys
+// a node proved to work come first and stay there; the rest are handed out in an order that
+// changes every few minutes, so every candidate is eventually the one that gets tried and
+// checked, instead of the same first few links being tested forever.
+func (s *Store) ListProxyKeysForNode(ctx context.Context, perCarrier int) ([]NodeProxyKey, error) {
+	if perCarrier <= 0 {
+		perCarrier = 256
+	}
+	window := int(time.Now().Unix() / int64(proxyKeyRotationWindow.Seconds()))
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.id, p.name, p.link_enc, p.kind, p.priority,
-		       array_agg(c.carrier ORDER BY c.carrier)
-		FROM proxy_keys p
-		JOIN proxy_key_carriers c ON c.proxy_key_id = p.id
-		WHERE p.enabled = true
-		GROUP BY p.id
-		ORDER BY p.created_at
-	`)
+		SELECT id, name, link_enc, kind, priority, carriers FROM (
+			SELECT p.id, p.name, p.link_enc, p.kind, p.priority,
+			       array_agg(c.carrier ORDER BY c.carrier) AS carriers,
+			       row_number() OVER (
+			           PARTITION BY c.carrier
+			           ORDER BY (p.state = 'ok') DESC, p.priority DESC,
+			                    mod(abs((hashtext(p.id::text || ':' || c.carrier)::bigint % 1000003)
+			                            * (1 + ($2::bigint * 7919) % 1000003)), 1000003),
+			                    p.created_at) AS rn
+			FROM proxy_keys p
+			JOIN proxy_key_carriers c ON c.proxy_key_id = p.id
+			WHERE p.enabled = true
+			GROUP BY p.id, c.carrier
+		) ranked
+		WHERE rn <= $1
+	`, perCarrier, window)
 	if err != nil {
 		return nil, fmt.Errorf("list proxy keys for node: %w", err)
 	}

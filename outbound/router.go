@@ -183,7 +183,16 @@ func (r *Router) Dial(ctx context.Context, network, address string, direct trans
 	if pool == nil || pool.Len() == 0 {
 		return direct(ctx, network, address)
 	}
+	if pool.VerifiedOnly() && !pool.HasVerified() {
+		return direct(ctx, network, address)
+	}
 	subject := carrierType + "|" + address
+	if hint, ok := transport.DialHintFrom(ctx); ok {
+		subject = carrierType + "|" + hint.Subject
+		if hint.Spread {
+			return pool.DialSpread(ctx, subject, network, address)
+		}
+	}
 	conn, err := pool.DialContext(ctx, subject, network, address)
 	if err != nil {
 		return nil, err
@@ -192,3 +201,30 @@ func (r *Router) Dial(ctx context.Context, network, address string, direct trans
 }
 
 func (r *Router) Hook() transport.DialHook { return r.Dial }
+
+func (r *Router) Feedback(subject string, err error) {
+	carrierType, _, ok := strings.Cut(subject, "|")
+	if !ok {
+		return
+	}
+	r.mu.RLock()
+	pool := r.pools[carrierType]
+	r.mu.RUnlock()
+	if pool != nil {
+		pool.Penalize(subject, err)
+	}
+}
+
+func (r *Router) HintFeedback() transport.DialFeedback {
+	return func(subject string, err error) {
+		r.mu.RLock()
+		carriers := make([]string, 0, len(r.pools))
+		for name := range r.pools {
+			carriers = append(carriers, name)
+		}
+		r.mu.RUnlock()
+		for _, name := range carriers {
+			r.Feedback(name+"|"+subject, err)
+		}
+	}
+}

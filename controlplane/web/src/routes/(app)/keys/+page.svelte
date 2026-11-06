@@ -32,6 +32,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import QRModal from '$lib/components/QRModal.svelte';
 	import TokenReveal from '$lib/components/TokenReveal.svelte';
+	import AvitoCookieHelp from '$lib/components/AvitoCookieHelp.svelte';
 	import { toast } from '$lib/state/toast.svelte';
 	import { confirmDialog } from '$lib/state/confirm.svelte';
 
@@ -55,6 +56,7 @@
 	let label = $state('');
 	let docUrl = $state('');
 	let docUrls = $state('');
+	let avitoCookies = $state('');
 	let transport = $state('yandex');
 	let e2eEncryption = $state(false);
 	let limitGb = $state('');
@@ -97,6 +99,7 @@
 	let editTransport = $state('yandex');
 	let editDocUrl = $state('');
 	let editDocUrls = $state('');
+	let editAvitoCookies = $state('');
 	let editE2e = $state(false);
 	let editLimitGb = $state('');
 	let editEnabled = $state(true);
@@ -204,6 +207,10 @@
 			createError = t('keys.invalidDoc');
 			return;
 		}
+		if (transport === 'avito' && !avitoCookies.trim()) {
+			createError = t('keys.avitoCookiesRequired');
+			return;
+		}
 		creating = true;
 		createError = null;
 		try {
@@ -214,8 +221,10 @@
 				transport: transport || undefined,
 				e2e_encryption: e2eEncryption,
 				traffic_limit_bytes: gbToBytes(limitGb),
+				avito_cookies: transport === 'avito' ? avitoCookies.trim() : undefined
 			});
 			toast.ok(t('keys.createSuccess'));
+			avitoCookies = '';
 			label = '';
 			docUrl = '';
 			docUrls = '';
@@ -322,6 +331,7 @@
 		editTransport = k.Transport;
 		editDocUrl = k.DocURL;
 		editDocUrls = (k.DocURLs ?? []).join('\n');
+		editAvitoCookies = '';
 		editE2e = k.E2EEncryption;
 		editLimitGb =
 			k.TrafficLimitBytes != null ? String(Math.round((k.TrafficLimitBytes / 1024 ** 3) * 10) / 10) : '';
@@ -372,6 +382,10 @@
 				body.doc_url = editDocUrl.trim();
 			}
 			await api.patchKey(editKey.ID, body);
+			if (editTransport === 'avito' && editAvitoCookies.trim()) {
+				await api.setKeyCookies(editKey.ID, editAvitoCookies.trim());
+				toast.ok(t('keys.avitoCookiesSaved'));
+			}
 			toast.ok(t('keys.editSaved'));
 			editKey = null;
 			await refreshAll();
@@ -501,6 +515,15 @@
 				<input type="checkbox" class="h-4 w-4" bind:checked={e2eEncryption} />
 				<span class="text-xs font-medium text-[var(--of-muted)]">{t('keys.e2e')}</span>
 			</label>
+			{#if transport === 'avito'}
+				<div class="space-y-2 sm:col-span-2 lg:col-span-4">
+					<label class="block">
+						<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.avitoCookies')} *</span>
+						<textarea class="input font-mono text-xs" rows="4" bind:value={avitoCookies} placeholder={t('keys.avitoCookiesPh')} autocomplete="off" spellcheck="false"></textarea>
+					</label>
+					<AvitoCookieHelp />
+				</div>
+			{/if}
 			<div class="flex items-end sm:col-span-2 lg:col-span-4">
 				<Button type="submit" variant="primary" disabled={creating} class="w-full">
 					<Plus class="h-4 w-4" />
@@ -560,6 +583,7 @@
 						<th>{t('keys.colLabel')}</th>
 						<th>{t('keys.colId')}</th>
 						<th>{t('keys.colTransport')}</th>
+						<th>{t('keys.colRoom')}</th>
 						<th>{t('keys.colStatus')}</th>
 						<th class="num">{t('keys.colTraffic')}</th>
 						<th>{t('keys.colOwner')}</th>
@@ -577,8 +601,26 @@
 							<td class="font-mono text-xs text-[var(--of-muted)]" title={k.ID} data-label={t('keys.colId')}>{shortId(k.ID)}</td>
 							<td data-label={t('keys.colTransport')}>
 								<span class="text-xs text-[var(--of-muted)]">{k.Transport}</span>
+								{#if k.Transport === 'avito'}
+									<Badge tone={k.HasCookies ? 'ok' : 'warn'}>{k.HasCookies ? t('keys.avitoCookiesSet') : t('keys.avitoCookiesMissing')}</Badge>
+								{/if}
 							</td>
-							<td data-label={t('keys.colStatus')}>
+							<td data-label={t('keys.colRoom')}>
+							{#if k.Transport === 'cupsonline' || k.Transport === 'avito'}
+								{#if k.RoomState === 'ready'}
+									<Badge tone="ok" dot>{t('keys.roomReady')}</Badge>
+								{:else if k.RoomState === 'failed'}
+									<span title={k.RoomStateError ?? ''}>
+										<Badge tone="danger" dot>{t('keys.roomFailed')}</Badge>
+									</span>
+								{:else}
+									<Badge tone="warn" dot>{t('keys.roomWaiting')}</Badge>
+								{/if}
+							{:else}
+								<span class="text-xs text-[var(--of-muted)]">-</span>
+							{/if}
+						</td>
+						<td data-label={t('keys.colStatus')}>
 								<Badge tone={statusTone[status]} dot>{t(statusLabel[status])}</Badge>
 							</td>
 							<td class="num tabular-nums text-[var(--of-ink)]" data-label={t('keys.colTraffic')}>
@@ -699,6 +741,13 @@
 					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{docLabelFor(editTransport)} *</span>
 					<input class="input" bind:value={editDocUrl} placeholder={docPlaceholderFor(editTransport)} />
 				</label>
+			{/if}
+			{#if editTransport === 'avito'}
+				<label class="block">
+					<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.avitoCookiesReplace')}</span>
+					<textarea class="input font-mono text-xs" rows="4" bind:value={editAvitoCookies} placeholder={t('keys.avitoCookiesPh')} autocomplete="off" spellcheck="false"></textarea>
+				</label>
+				<AvitoCookieHelp />
 			{/if}
 			<label class="block">
 				<span class="mb-1.5 block text-xs font-medium text-[var(--of-muted)]">{t('keys.limitGb')}</span>

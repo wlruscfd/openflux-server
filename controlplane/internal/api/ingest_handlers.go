@@ -17,6 +17,7 @@ type createKeyRequest struct {
 	TrafficLimitBytes *int64     `json:"traffic_limit_bytes"`
 	OwnerRef          string     `json:"owner_ref"`
 	ExpiresAt         *time.Time `json:"expires_at"`
+	AvitoCookies      string     `json:"avito_cookies"`
 }
 
 const transportYandexMultistream = "yandex_multistream"
@@ -75,8 +76,21 @@ func createKeyHandler(a *App, w http.ResponseWriter, r *http.Request, forcedOwne
 	// Tracks every URL claimed earlier in this batch, since HasEnabledKeyWithAnyDocURL only sees keys already committed - two entries in one bulk import sharing a URL would otherwise both pass the check.
 	urlsInBatch := make(map[string]bool, len(reqs))
 
+	avitoJars := make([]string, len(reqs))
+	for i := range reqs {
+		if reqs[i].Transport != transportAvito {
+			continue
+		}
+		jar, err := normalizeAvitoCookies(reqs[i].AvitoCookies)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "avito keys need cookies: "+err.Error())
+			return
+		}
+		avitoJars[i] = jar
+	}
+
 	created := make([]createdKey, 0, len(reqs))
-	for _, req := range reqs {
+	for i, req := range reqs {
 		if req.Transport == "" {
 			req.Transport = "yandex"
 		}
@@ -150,6 +164,18 @@ func createKeyHandler(a *App, w http.ResponseWriter, r *http.Request, forcedOwne
 		if err != nil {
 			writeInternalError(w, r, "create key failed", err)
 			return
+		}
+
+		if avitoJars[i] != "" {
+			enc, err := a.Cipher.Encrypt(avitoJars[i])
+			if err == nil {
+				err = a.Store.SetKeyCookies(r.Context(), k.ID, enc, "")
+			}
+			if err != nil {
+				_ = a.Store.DeleteKey(r.Context(), k.ID)
+				writeInternalError(w, r, "store cookies failed", err)
+				return
+			}
 		}
 
 		created = append(created, createdKey{

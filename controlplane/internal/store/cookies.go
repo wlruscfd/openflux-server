@@ -35,6 +35,23 @@ func (s *Store) SetKeyCookies(ctx context.Context, keyID string, enc []byte, res
 	return nil
 }
 
+func (s *Store) KeyIDsWithCookies(ctx context.Context, ids []string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `SELECT key_id FROM key_cookies WHERE key_id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("keys with cookies: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("keys with cookies: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) DeleteKeyCookies(ctx context.Context, keyID string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM key_cookies WHERE key_id = $1`, keyID)
 	if err != nil {

@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"math"
@@ -35,6 +36,11 @@ type keyState struct {
 	cooldownUntil  time.Time
 	lastErr        error
 
+	// probe is what the last check of this key found: 0 not checked, 1 reached the provider,
+	// 2 did not. It steers the choice of a key for a new subject and never penalises one.
+	probe      atomic.Int32
+	verifiedAt atomic.Int64
+
 	dials    atomic.Uint64
 	failures atomic.Uint64
 }
@@ -61,6 +67,16 @@ func (s *keyState) recordFailure(err error, cooldown time.Duration) {
 	s.seen, s.healthy = true, false
 	s.consecutiveErr++
 	s.lastErr = err
+	// A key that keeps failing is left alone for longer each time. A fixed pause let a dead key
+	// come back every minute and a half and cost a connection attempt - five seconds of timeout
+	// for the carrier that happened to be on it - for as long as the key stayed in the set.
+	shift := s.consecutiveErr - 1
+	if shift > 4 {
+		shift = 4
+	}
+	if shift > 0 {
+		cooldown <<= uint(shift)
+	}
 	if until := time.Now().Add(cooldown); until.After(s.cooldownUntil) {
 		s.cooldownUntil = until
 	}
@@ -73,6 +89,18 @@ func (s *keyState) available(now time.Time) bool {
 		return true
 	}
 	return now.After(s.cooldownUntil)
+}
+
+// rank orders keys for a new subject: a key a check found working first, one nobody has checked
+// next, one a check found dead last.
+func (s *keyState) rank() int {
+	switch s.probe.Load() {
+	case 1:
+		return 0
+	case 2:
+		return 2
+	}
+	return 1
 }
 
 func (s *keyState) score() float64 {
@@ -149,6 +177,8 @@ type KeySpec struct {
 
 type Pool struct {
 	cfg PoolConfig
+
+	verifiedOnly atomic.Bool
 
 	mu      sync.Mutex
 	keys    []*keyState
@@ -264,15 +294,23 @@ func (p *Pool) heldLocked(subject string, now time.Time) bool {
 	return now.Before(p.heldTil[subject])
 }
 
+// usableLocked: a key that may be dialed now. A pool that serves only verified keys skips the rest.
+func (p *Pool) usableLocked(st *keyState, now time.Time) bool {
+	if !st.available(now) {
+		return false
+	}
+	return !p.verifiedOnly.Load() || st.verified(now)
+}
+
 func (p *Pool) bestLocked(now time.Time) *keyState {
 	var best *keyState
 	bestScore := math.Inf(1)
 	for _, st := range p.keys {
-		if !st.available(now) {
+		if !p.usableLocked(st, now) {
 			continue
 		}
 		s := st.score()
-		if best == nil || s < bestScore {
+		if best == nil || st.rank() < best.rank() || (st.rank() == best.rank() && s < bestScore) {
 			best, bestScore = st, s
 		}
 	}
@@ -284,7 +322,7 @@ func (p *Pool) pickLocked(subject string, now time.Time) *keyState {
 		return nil
 	}
 	if id := p.pinned[subject]; id != "" {
-		if st := p.byID[id]; st != nil && st.available(now) {
+		if st := p.byID[id]; st != nil && p.usableLocked(st, now) {
 			return st
 		}
 		if p.heldLocked(subject, now) {
@@ -313,6 +351,71 @@ func (p *Pool) noteMoveLocked(subject string, now time.Time) {
 	if len(kept) >= p.cfg.FlapThreshold {
 		p.heldTil[subject] = now.Add(p.cfg.RebalanceHold)
 		p.movedAt[subject] = nil
+	}
+}
+
+func (p *Pool) spreadLocked(subject string, now time.Time) *keyState {
+	if id := p.pinned[subject]; id != "" {
+		if st := p.byID[id]; st != nil && p.usableLocked(st, now) {
+			return st
+		}
+		delete(p.pinned, subject)
+	}
+	load := make(map[string]int, len(p.keys))
+	for _, id := range p.pinned {
+		load[id]++
+	}
+	var best *keyState
+	for _, st := range p.keys {
+		if !p.usableLocked(st, now) {
+			continue
+		}
+		if best == nil || st.rank() < best.rank() ||
+			(st.rank() == best.rank() && (load[st.id] < load[best.id] ||
+				(load[st.id] == load[best.id] && st.score() < best.score()))) {
+			best = st
+		}
+	}
+	if best != nil {
+		p.pinned[subject] = best.id
+	}
+	return best
+}
+
+func (p *Pool) DialSpread(ctx context.Context, subject, network, address string) (net.Conn, error) {
+	p.mu.Lock()
+	st := p.spreadLocked(subject, time.Now())
+	err := error(nil)
+	if st == nil {
+		err = p.unavailableErrorLocked()
+	}
+	p.mu.Unlock()
+	if st == nil {
+		return nil, err
+	}
+	started := time.Now()
+	conn, err := st.dial.DialContext(ctx, network, address)
+	st.dials.Add(1)
+	if err == nil {
+		st.recordSuccess(time.Since(started))
+		return conn, nil
+	}
+	st.failures.Add(1)
+	st.recordFailure(err, p.cfg.Cooldown)
+	p.mu.Lock()
+	delete(p.pinned, subject)
+	p.mu.Unlock()
+	return nil, fmt.Errorf("proxy %s: %w", st.label, err)
+}
+
+func (p *Pool) Penalize(subject string, err error) {
+	p.mu.Lock()
+	id := p.pinned[subject]
+	st := p.byID[id]
+	delete(p.pinned, subject)
+	p.mu.Unlock()
+	if st != nil {
+		st.recordFailure(err, p.cfg.Cooldown)
 	}
 }
 
@@ -362,6 +465,49 @@ func (p *Pool) DialContext(ctx context.Context, subject, network, address string
 	}
 	p.mu.Unlock()
 	return nil, fmt.Errorf("proxy %s: %w", st.label, err)
+}
+
+// ProbeKey checks one key against one address and records the outcome for that key.
+//
+// The pool's own probe answers a different question: it asks whether the carrier can reach
+// the provider at all, through whichever key it likes best. A list of a thousand public
+// proxies is mostly dead, and the panel has to know which ones are alive, so every key is
+// checked on its own and the result is kept with the key.
+//
+// The check is a TLS handshake and not a plain connection: a provider that does not like the
+// address a request comes from lets the connection open and closes it during the handshake.
+// A key that only opens a socket cannot fetch the document, and marking it as one that can
+// sends the carrier to a key that will only ever fail.
+func (p *Pool) ProbeKey(ctx context.Context, keyID, network, address string) (time.Duration, error) {
+	p.mu.Lock()
+	st := p.byID[keyID]
+	p.mu.Unlock()
+	if st == nil {
+		return 0, ErrNoProxy
+	}
+	started := time.Now()
+	conn, err := st.dial.DialContext(ctx, network, address)
+	if err != nil {
+		st.probe.Store(2)
+		return time.Since(started), err
+	}
+	defer conn.Close()
+
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		st.probe.Store(2)
+		return time.Since(started), fmt.Errorf("tls %s: %w", host, err)
+	}
+	st.probe.Store(1)
+	// The check does not touch the key's score. A check is not use: penalising a key for
+	// failing a probe puts every key of a carrier into a cooldown at once, and the
+	// carrier then has nothing left to dial with. The panel is told the result and
+	// decides what to hand out next; the score belongs to the traffic that failed.
+	return time.Since(started), nil
 }
 
 func (p *Pool) Probe(ctx context.Context, subject, network, address string) error {

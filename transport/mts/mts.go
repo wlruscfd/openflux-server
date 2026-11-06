@@ -519,6 +519,14 @@ func (t *Transport) fetchGuestSession(boardUID string) (mtsInfo, error) {
 	if info.reserveWs == "" {
 		info.reserveWs = mtsReserveWS
 	}
+	// The board names the hosts it serves: the one that gives the document and the two the
+	// channel runs on. None of them is the host the share link points at, so none of them is
+	// in the table anyone wrote down, and the requests left straight from the node's own
+	// address, which is the address the provider blocks. The document half worked and the
+	// channel half did not, which is what a connection that carries traffic one way looks like.
+	transport.RegisterCarrierHost("mts", info.appDomain)
+	transport.RegisterCarrierHost("mts", info.wsDomain)
+	transport.RegisterCarrierHost("mts", info.reserveWs)
 
 	pods, err := t.fetchPods(client, info)
 	if err != nil {

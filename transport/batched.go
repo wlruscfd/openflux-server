@@ -108,6 +108,27 @@ func (b *BatchedTransport) Start() error {
 	return nil
 }
 
+// RoomList returns the inner transport's room list, if it has one.
+//
+// A managed cupsonline exit creates its own rooms and the nodeagent has to
+// publish the list, but the nodeagent only ever sees this wrapper. Embedding
+// the Transport interface promotes its methods and not the room-list ones, so
+// without this the nodeagent's check for them fails and the list is never
+// reported: the key keeps an empty doc_url and the client has nothing to open.
+func (b *BatchedTransport) RoomList() string {
+	if r, ok := b.Transport.(interface{ RoomList() string }); ok {
+		return r.RoomList()
+	}
+	return ""
+}
+
+// OnRoomList forwards the room-list subscription to the inner transport.
+func (b *BatchedTransport) OnRoomList(f func(string)) {
+	if r, ok := b.Transport.(interface{ OnRoomList(func(string)) }); ok {
+		r.OnRoomList(f)
+	}
+}
+
 func (b *BatchedTransport) Stop() error {
 	utils.Debugf("[BATCH] Stop() called")
 	b.lifecycle.Lock()

@@ -28,6 +28,7 @@ type fakeAvito struct {
 	created  int
 	nextConn int
 	roomHits int
+	cookie   string
 }
 
 type fakeDoc struct {
@@ -88,6 +89,7 @@ func (f *fakeAvito) sharedb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	f.cookie = r.Header.Get("Cookie")
 	f.nextConn++
 	m := &fakeMember{id: fmt.Sprintf("conn%d", f.nextConn), ws: ws}
 	f.mu.Unlock()
@@ -270,4 +272,28 @@ func TestFleetSizeShrinksRoomsPerKey(t *testing.T) {
 			t.Errorf("%d keys: %d rooms, want %d", keys, got, want)
 		}
 	}
+}
+
+func TestExitWithoutCookiesDoesNotWaitOrCallTheServer(t *testing.T) {
+	f := newFakeAvito(t)
+	tr := NewAvitoTransport("", transport.DefaultConfig(), "", false)
+	if err := tr.Start(); !errors.Is(err, errNoCookie) {
+		t.Fatalf("Start = %v, want errNoCookie", err)
+	}
+	if f.roomHits != 0 {
+		t.Fatalf("%d requests without cookies", f.roomHits)
+	}
+}
+
+func TestProvidedCookiesReachTheRoomsOnReconnect(t *testing.T) {
+	f := newFakeAvito(t)
+	exit := start(t, "", "sid=ok", false)
+	waitFor(t, "connected", func() bool { return exit.t.IsConnected() })
+
+	exit.t.ProvideCookies("sid=ok; fresh=1")
+	waitFor(t, "rooms reconnect with the new cookies", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.cookie == "sid=ok; fresh=1"
+	})
 }

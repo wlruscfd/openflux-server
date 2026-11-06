@@ -117,6 +117,13 @@ type Orchestrator struct {
 	lastSummaryAt    time.Time
 	warnedAt         map[string]time.Time
 
+	startMu      sync.Mutex
+	startRetryAt map[string]time.Time
+
+	proxyKeyFailuresMu sync.Mutex
+	proxyKeyFailures   map[string]int
+	proxyStable        proxyStabilizer
+
 	warpMu sync.Mutex
 	warps  map[string]*warp.Tunnel
 
@@ -125,6 +132,10 @@ proxyMu        sync.Mutex
 	proxyInstalled bool
 
 	lastPollOK atomic.Int64
+
+	proxyMu        sync.Mutex
+	proxy          *outbound.Manager
+	proxyInstalled bool
 }
 
 // Healthy says whether this process has reached the control plane and fetched its keys at least once.
@@ -235,6 +246,11 @@ const workerStartStagger = 150 * time.Millisecond
 
 const maxWorkerStartsPerReconcile = 100
 
+// startRetryBackoff is how long a key waits after a failed start before it is tried again.
+// A provider that throttles this node answers every attempt with an error, and hammering
+// it keeps the block alive, so the wait has to outlast the provider's window.
+const startRetryBackoff = 5 * time.Minute
+
 type cookieProvider interface {
 	ProvideCookies(cookieStr string)
 }
@@ -328,6 +344,61 @@ func cookieFingerprint(jar string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// startBackoffActive reports whether a key that failed to start recently still has to wait.
+// A provider that is throttling this node answers every attempt with an error, and trying
+// again straight away only keeps the block alive, so a failed key waits a few minutes.
+func (o *Orchestrator) startBackoffActive(keyID string) bool {
+	o.startMu.Lock()
+	defer o.startMu.Unlock()
+	until, ok := o.startRetryAt[keyID]
+	return ok && time.Now().Before(until)
+}
+
+func (o *Orchestrator) noteStartFailure(keyID string) {
+	o.startMu.Lock()
+	defer o.startMu.Unlock()
+	if o.startRetryAt == nil {
+		o.startRetryAt = make(map[string]time.Time)
+	}
+	o.startRetryAt[keyID] = time.Now().Add(startRetryBackoff)
+}
+
+func (o *Orchestrator) clearStartFailure(keyID string) {
+	o.startMu.Lock()
+	defer o.startMu.Unlock()
+	delete(o.startRetryAt, keyID)
+}
+
+func (o *Orchestrator) avitoCookiesFor(keyID string) string {	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	jars, err := o.client.ListKeyCookies(ctx)
+	if err != nil {
+		utils.Debugf("[NODEAGENT] key %s: cookies lookup failed: %v", keyID, err)
+	}
+	for _, j := range jars {
+		if j.KeyID == keyID && j.Cookies != "" {
+			return j.Cookies
+		}
+	}
+	return o.cfg.AvitoCookies
+}
+
+// reportRoomFailure tells the panel that the rooms of a key could not be made.
+//
+// A key whose transport makes its own rooms has no document until the exit creates them.
+// When that fails the client has nothing to open, and the panel cannot tell that from a key
+// that is simply waiting, so the reason is reported.
+func (o *Orchestrator) reportRoomFailure(k RemoteKey, cause error) {
+	if k.Transport != "cupsonline" && k.Transport != "avito" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := o.client.ReportRoomList(ctx, k.ID, "", cause.Error()); err != nil {
+		utils.Debugf("[NODEAGENT] key %s (%s): room failure report failed: %v", k.ID, k.Transport, err)
+	}
+}
+
 func (o *Orchestrator) publishRoomLists(trans transport.Transport, k RemoteKey) {
 	rl, ok := trans.(interface {
 		OnRoomList(func(string))
@@ -346,7 +417,7 @@ func (o *Orchestrator) publishRoomLists(trans transport.Transport, k RemoteKey) 
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			if _, err := o.client.ReportRoomList(ctx, k.ID, published); err != nil {
+			if _, err := o.client.ReportRoomList(ctx, k.ID, published, ""); err != nil {
 				utils.Debugf("[NODEAGENT] key %s (%s): room list report failed: %v", k.ID, k.Transport, err)
 			}
 		}()
@@ -397,6 +468,9 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		if _, exists := o.workers[id]; exists {
 			continue
 		}
+		if o.startBackoffActive(id) {
+			continue
+		}
 		if !managedTransportSupported(k.Transport) {
 			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline/avito/bitrix/pruffme transports today", id)
 			continue
@@ -428,14 +502,21 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 
 		w, err := o.startWorker(k)
 		if err != nil {
+			o.noteStartFailure(k.ID)
+			o.reportRoomFailure(k, err)
 			// Port-range exhaustion is logged unconditionally (not gated behind --debug) since it otherwise fails silently, the same way, every poll cycle.
 			if o.cfg.ExitMode == nodetunnel.ExitModeRaw && strings.Contains(err.Error(), "no port range capacity") {
 				log.Printf("[NODEAGENT] key %s not started: %v - this node has reached its concurrent-key ceiling (raise it with --port-range-size, or run another node)", k.ID, err)
 			} else {
+				// A key that cannot start is the one thing an operator needs to see: without
+				// this line a blocked provider is indistinguishable from a key that is simply
+				// still waiting, and the panel shows an empty document for good.
+				o.warnThrottled("start-"+k.ID, "[NODEAGENT] key %s (%s) not started: %v", k.ID, k.Transport, err)
 				utils.Debugf("[NODEAGENT] failed to start worker for key %s: %v", k.ID, err)
 			}
 			continue
 		}
+		o.clearStartFailure(k.ID)
 		log.Printf("[NODEAGENT] key %s (%s): worker started", k.ID, k.Transport)
 
 		o.mu.Lock()
@@ -676,7 +757,7 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 			}
 			return nil, fmt.Errorf("key %s: avito transport doesn't support e2e_encryption yet", k.ID)
 		}
-		trans = transport.NewStripedRoom(avito.NewAvitoTransport(k.DocURL, transport.DefaultConfig(), o.cfg.AvitoCookies, false))
+		trans = transport.NewStripedRoom(avito.NewAvitoTransport(k.DocURL, transport.DefaultConfig(), o.avitoCookiesFor(k.ID), false))
 		o.publishRoomLists(trans, k)
 	case "yandex_multistream":
 		streams := make([]transport.Transport, len(k.DocURLs))

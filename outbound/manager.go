@@ -13,14 +13,23 @@ import (
 type sidecarRunner interface {
 	Apply(keys []Key) error
 	DialerFor(keyID string) Dialer
+	Settling() bool
 	Stop()
 }
 
 // MaxKeysPerCarrier bounds one pool. A node hands every carrier connection to one local port per key,
 // so the cap is really a cap on how much a misconfigured panel can cost a node: sing-box opens one
 // listener and one outbound per key, and a public key list has thousands of dead entries in it.
-const MaxKeysPerCarrier = 64
+//
+// The pool can only pick a working key if it has more than a handful to choose from: most of a
+// public list is dead, so a small pool is mostly dead keys and the carrier has nothing to dial
+// with. The panel hands out this many per carrier, and the node materializes them.
+const MaxKeysPerCarrier = 128
 
+// MaxKeysTotal is how many keys the node materializes altogether. Every one of them needs a local
+// port, so the total has to fit the sidecar's port range: past that the sidecar does not come up
+// at all, and every carrier falls back to the node's own address, which is the address the
+// provider blocks.
 func MaxKeysTotal() int { return MaxKeysPerCarrier * 8 }
 
 type Manager struct {
@@ -28,7 +37,10 @@ type Manager struct {
 	sidecar sidecarRunner
 
 	mu      sync.Mutex
+	groups  map[string][]Key
 	probeIn time.Duration
+	slowAt  map[string]time.Time
+	cursor  map[string]int
 }
 
 func NewManager(opts SidecarOptions) *Manager {
@@ -37,25 +49,35 @@ func NewManager(opts SidecarOptions) *Manager {
 
 func (m *Manager) Router() *Router { return m.router }
 
+// Settling reports whether the proxy was rebuilt so recently that a check would
+// fail against listeners that are not up yet.
+func (m *Manager) Settling() bool { return m.sidecar.Settling() }
+
 func (m *Manager) LoadCarrierHosts() { m.router.LoadCarrierHosts() }
 
 func (m *Manager) Install() {
 	transport.SetDialHook(m.router.Hook())
+	transport.SetDialFeedback(m.router.HintFeedback())
+	transport.SetHostRegistrar(m.router.RegisterHost)
 	utils.SafeGo("outbound.probe", m.probeLoop)
 }
 
 func (m *Manager) Uninstall() {
 	transport.SetDialHook(nil)
+	transport.SetDialFeedback(nil)
+	transport.SetHostRegistrar(nil)
 	m.sidecar.Stop()
 }
 
 func (m *Manager) Stop() {
 	transport.SetDialHook(nil)
+	transport.SetDialFeedback(nil)
 	m.sidecar.Stop()
 }
 
 func (m *Manager) Apply(groups map[string][]Key) error {
 	m.mu.Lock()
+	m.groups = groups
 	defer m.mu.Unlock()
 	carriers := make([]string, 0, len(groups))
 	for carrierType := range groups {
@@ -95,8 +117,87 @@ func (m *Manager) Apply(groups map[string][]Key) error {
 			m.router.SetPool(carrierType, pool)
 		}
 		pool.SetKeys(specs)
+		pool.SetVerifiedOnly(verifiedCarriers[carrierType])
 	}
 	return nil
+}
+
+// KeyState is what the node found when it last checked one key against the services that
+// key is meant to reach. The panel keeps it, so the list can be sorted by what actually
+// works instead of by the order the links were pasted in.
+type KeyState struct {
+	ID        string        `json:"id"`
+	Carrier   string        `json:"carrier"`
+	OK        bool          `json:"ok"`
+	Latency   time.Duration `json:"latency"`
+	Error     string        `json:"error,omitempty"`
+	CheckedAt time.Time     `json:"checked_at"`
+}
+
+// ProbeAll checks every key of every carrier against the hosts that carrier has to reach.
+//
+// A public proxy list is mostly dead, so a key is only worth keeping if it opens a
+// connection to the provider. The check is per key and per host, because a key that reaches
+// one service is not necessarily the one that reaches the other.
+func (m *Manager) ProbeAll(ctx context.Context) []KeyState {
+	m.mu.Lock()
+	groups := m.groups
+	m.mu.Unlock()
+
+	out := make([]KeyState, 0, 64)
+	for carrierType := range groups {
+		hosts := carrierHostsOf(carrierType)
+		pool := m.router.Pool(carrierType)
+		if pool == nil {
+			continue
+		}
+		if len(hosts) == 0 {
+			out = append(out, KeyState{ID: "-", Carrier: carrierType, Error: "no service host for this carrier",
+				CheckedAt: time.Now()})
+			continue
+		}
+		if verifiedCarriers[carrierType] {
+			// Slow, provider-specific check: a few keys per round, never the whole pool.
+			out = append(out, m.probeCarousel(ctx, carrierType, pool, hosts)...)
+			continue
+		}
+		// Only the materialized keys are checked: they are the ones with a listener, and a
+		// key nobody has tried yet must stay unknown rather than be written down as broken.
+		for _, snap := range pool.Snapshots() {
+			k := Key{ID: snap.ID, Name: snap.Label}
+			ok := false
+			var latency time.Duration
+			var lastErr error
+			// Every host of the carrier has to answer. A key that reaches the
+			// document but cannot open the channel is not a key this carrier
+			// can work with, and the channel is where the traffic goes. The
+			// first two hosts are the service and its channel; the rest are
+			// spares, and a key that cannot reach a spare is still usable.
+			needed := len(hosts)
+			if needed > 2 {
+				needed = 2
+			}
+			for _, host := range hosts[:needed] {
+				probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+				took, err := pool.ProbeKey(probeCtx, k.ID, "tcp", host+":443")
+				cancel()
+				if err != nil {
+					ok = false
+					latency = 0
+					lastErr = err
+					break
+				}
+				ok = true
+				latency = took
+			}
+			state := KeyState{ID: k.ID, Carrier: carrierType, OK: ok, Latency: latency, CheckedAt: time.Now()}
+			if !ok && lastErr != nil {
+				state.Error = lastErr.Error()
+			}
+			out = append(out, state)
+		}
+	}
+	return out
 }
 
 func (m *Manager) probeLoop() {
