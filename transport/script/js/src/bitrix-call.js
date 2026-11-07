@@ -3,19 +3,22 @@
 // participant without inspecting. Both peers join the same conference as
 // guests; the node keeps the call alive (it recreates one that has ended).
 //
-// The guest session (cookie jar of a browser that joined the conference
-// once) is the key material: the page hands out the signed user/call tokens
-// only to a registered guest session, everything after that is headless.
+// Sessions: one guest per line in the tokens param. Every session is its own
+// sending socket with its own ~4.2 Mbit/s ceiling, so N lines stripe the
+// traffic N ways (round-robin on send, sid+seq dedupe on receive - the bus
+// is a broadcast). The page itself is never fetched at runtime: a page view
+// rotates the live participant session on the server.
 
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 var EVENT = "Call::openflux";
 var CHUNK_BYTES = 7168;
+var SENDERS_PER_TICK = 4;
 
 var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.0.0",
+      version: "1.1.0",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -23,14 +26,14 @@ var Transport = {
       params: [
         { key: "url", label: "Conference URL", type: "url", required: true,
           description: "Bitrix24 video conference link (https://portal/video/xxx)" },
-        { key: "tokens", label: "Guest tokens", type: "secret", required: false, group: "Session",
-          description: "userToken|callToken of a registered guest - open the conference link in a browser, join once, and take both JWTs from the page source. Each side needs its own guest." },
-        { key: "session", label: "Guest session cookies", type: "secret", required: false, group: "Session",
-          description: "Cookie string of that same browser session; used to fetch fresh tokens when the tokens param is empty." },
+        { key: "tokens", label: "Guest sessions", type: "textarea", required: false, group: "Session",
+          description: "One session per line: userToken|callToken of a browser that joined this conference once. Each extra line adds ~4 Mbit/s of speed. Each side needs its own guests." },
+        { key: "session", label: "Session cookies", type: "textarea", required: false, group: "Session",
+          description: "Alternative: the cookie string of a guest browser session; tokens are fetched from the page once." },
         { key: "role", label: "Role", type: "select", options: ["client", "node"], default: "client", group: "Advanced",
           description: "node recreates the call when it has ended; managed nodes get this from the core automatically" },
         { key: "chunkMs", label: "Send interval, ms", type: "number", default: 20, min: 8, max: 200, advanced: true,
-          description: "the provider drops bus traffic past ~4.6 Mbit/s per socket; 15ms is the lossless point" },
+          description: "per-socket send floor; the provider drops bus traffic past ~4.2 Mbit/s per socket" },
       ],
     };
   },
@@ -41,81 +44,80 @@ var Transport = {
     this._isExit = cfg.params.exit === true || cfg.params.exit === "true" || cfg.params.role === "node";
     this._chunkMs = Number(cfg.params.chunkMs) || 20;
     this._session = String(cfg.params.session || "").trim();
-    this._sid = "";
+    this._conns = [];
+    this._seq = 0;
+    this._seen = {};
+    this._seenCount = 0;
+    this._ownSids = {};
     this._buf = [];
     this._bufLen = 0;
-    this._pc = null;
-    this._sock = null;
     this._closed = false;
-    this._connect();
+    this._rr = 0;
+    this._connectAll();
   },
 
-  _connect: async function () {
+  _sessionList: function () {
+    var out = [];
+    var multi = String(this._cfg.params.tokens || "");
+    var lines = multi.split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line && line.indexOf("|") > 0) out.push(line);
+    }
+    if (out.length === 0 && this._session) out.push(this._session);
+    return out;
+  },
+
+  _connectAll: function () {
     if (this._closed) return;
+    var lines = this._sessionList();
+    if (lines.length === 0) {
+      setState("dead", "no guest sessions: join the conference once in a browser and put userToken|callToken lines into Guest sessions");
+      return;
+    }
     setState("connecting");
+    for (var i = 0; i < lines.length; i++) {
+      this._startSession(lines[i], i);
+    }
+  },
+
+  _startSession: function (line, idx) {
+    var self = this;
+    var conn = { line: line, sid: "", sock: null, pc: null, alive: false, removed: false, timer: null };
+    this._conns.push(conn);
+    setTimeout(function () { self._connectSession(conn); }, idx * 400);
+  },
+
+  _connectSession: async function (conn) {
+    if (this._closed || conn.removed) return;
+    setState(this._aliveCount() > 0 ? "connected" : "connecting");
     try {
-      if (!this._toks) {
-        if (this._cfg.params.tokens) {
-          var parts = String(this._cfg.params.tokens).split("|");
-          this._toks = {
-            userToken: { raw: parts[0], payload: JSON.parse(text.decode(base64.decode(pad64(parts[0].split(".")[1])))) },
-            callToken: { raw: parts[1], payload: JSON.parse(text.decode(base64.decode(pad64(parts[1].split(".")[1])))) },
-          };
-        } else {
-          this._toks = await this._fetchTokens();
-        }
-      }
-      var toks = this._toks;
+      var toks = this._tokensOf(conn.line);
       var joined = await this._join(toks);
-      await this._socket(joined);
+      if (this._closed || conn.removed) return;
+      await this._socket(conn, joined);
     } catch (e) {
-      if (this._closed) return;
+      if (this._closed || conn.removed) return;
       var msg = String(e && e.message || e);
-      if (msg.indexOf("not a registered guest") >= 0 || msg.indexOf("session cookies") >= 0) {
-        setState("dead", msg);
+      if (msg.indexOf("not a registered guest") >= 0) {
+        if (this._aliveCount() === 0) setState("dead", msg);
         return;
       }
-      setState("reconnecting", msg);
-      var self = this;
-      setTimeout(function () { self._connect(); }, 5000);
+      setState(this._aliveCount() > 0 ? "degraded" : "reconnecting", "session: " + msg);
+      conn.timer = setTimeout(function () { Transport._connectSession(conn); }, 5000);
     }
   },
 
-  _cookieHeader: function () {
-    if (this._session) return this._session;
-    var jar = cookieJar.get() || {};
-    var parts = [];
-    for (var k in jar) parts.push(k + "=" + jar[k]);
-    return parts.join("; ");
-  },
-
-  _fetchTokens: async function () {
-    var res = await http.fetch({
-      url: this._portal,
-      method: "GET",
-      headers: { "Cookie": this._cookieHeader(), "User-Agent": UA },
-    });
-    if (res.status !== 200) throw new Error("conference page: http " + res.status);
-    var toks = res.body.match(/eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g) || [];
-    var userToken = null;
-    var callToken = null;
-    for (var i = 0; i < toks.length; i++) {
-      var payload = JSON.parse(text.decode(base64.decode(pad64(toks[i].split(".")[1]))));
-      if (payload.userId !== undefined && payload.userId !== null && userToken === null) userToken = { raw: toks[i], payload: payload };
-      if (payload.portalId !== undefined && callToken === null) callToken = { raw: toks[i], payload: payload };
-    }
-    if (!userToken || !callToken) throw new Error("conference page carries no session tokens");
-    if (!userToken.payload.userId) throw new Error("session cookies are not a registered guest: join the conference once in a browser and copy its cookies");
-    var sessid = "";
-    var sm = res.body.match(/"sessid":"([a-f0-9]{32})"/);
-    if (sm) sessid = sm[1];
-    setState("connecting", "page: user " + userToken.payload.userId);
-    return { userToken: userToken, callToken: callToken, sessid: sessid };
+  _tokensOf: function (line) {
+    var parts = line.split("|");
+    return {
+      userToken: { raw: parts[0], payload: JSON.parse(text.decode(base64.decode(pad64(parts[0].split(".")[1])))) },
+      callToken: { raw: parts[1], payload: JSON.parse(text.decode(base64.decode(pad64(parts[1].split(".")[1])))) },
+    };
   },
 
   _join: async function (toks) {
     var chatId = String(toks.callToken.payload.chatId || "");
-    var callUuid = "";
     var mustCreate = this._isExit;
     for (var attempt = 0; attempt < 2; attempt++) {
       var res = await http.fetch({
@@ -129,18 +131,16 @@ var Transport = {
           clientPlatform: "web",
           callType: 2,
           roomType: 1,
-          instanceId: "ofx-" + Math.random().toString(16).slice(2, 14) + Date.now().toString(16),
+          instanceId: "ofx-" + Math.random().toString(16).slice(2, 14) + Date.now().toString(16) + "-" + Math.floor(Math.random() * 1e6),
           callToken: toks.callToken.raw,
           provider: "Bitrix",
           isVideo: false,
-          callUuid: callUuid,
+          callUuid: "",
         }),
       });
       var data = null;
       try { data = JSON.parse(res.body); } catch (e) {}
       if (data && data.result && data.result.mediaServerUrl) {
-        this._chatId = chatId;
-        setState("connecting", "joined room " + String(data.result.roomId).slice(0, 8));
         return data.result;
       }
       var errText = data && data.error ? (data.error.message || data.error.code) : ("http " + res.status);
@@ -153,21 +153,27 @@ var Transport = {
     throw new Error("join: unreachable");
   },
 
-  _socket: async function (joined) {
+  _socket: async function (conn, joined) {
     var self = this;
     var url = joined.mediaServerUrl +
       "?auto_subscribe=0&sdk=js&version=1.6.7&protocol=8" +
       "&roomData=" + joined.roomData +
       "&clientVersion=1.0.0&clientPlatform=web";
     var sock = await ws.open(url, { "User-Agent": UA }, { readTimeoutMs: 45000 });
-    this._sock = sock;
+    if (this._closed || conn.removed) {
+      sock.close();
+      return;
+    }
+    conn.sock = sock;
+    conn.alive = true;
+    this._syncState();
 
     sock.onclose = function (reason) {
-      if (self._closed) return;
-      setState("reconnecting", "socket closed: " + reason);
-      self._clearTimers();
-      self._teardownMedia();
-      setTimeout(function () { self._connect(); }, 5000);
+      conn.alive = false;
+      if (conn.removed || self._closed) return;
+      self._teardownConn(conn);
+      self._syncState("socket closed: " + reason);
+      conn.timer = setTimeout(function () { self._connectSession(conn); }, 5000);
     };
 
     sock.onmessage = function (text) {
@@ -175,50 +181,42 @@ var Transport = {
       try { m = JSON.parse(text); } catch (e) { return; }
       if (m.joinResponse) {
         var jr = m.joinResponse;
-        self._sid = jr.localParticipant ? jr.localParticipant.sid : "";
-        self._setupPeer(jr.iceServers || []);
-        setState("connected");
+        conn.sid = jr.localParticipant ? jr.localParticipant.sid : "";
+        if (conn.sid) {
+          self._ownSids[conn.sid] = 1;
+        }
+        self._setupPeer(conn, jr.iceServers || []);
+        self._syncState();
       } else if (m.offer && m.offer.sdp) {
-        // webrtc disabled for test
+        self._answer(conn, m.offer.sdp);
       } else if (m.trickle && m.trickle.candidateInit) {
-        if (m.trickle.target === "SUBSCRIBER" && self._pc) {
+        if (m.trickle.target === "SUBSCRIBER" && conn.pc) {
           var ci = JSON.parse(m.trickle.candidateInit);
-          self._pc.addIceCandidate(ci);
+          conn.pc.addIceCandidate(ci);
         }
       } else if (m.newMessage) {
         self._onBus(m.newMessage);
       } else if (m.sidChanged && m.sidChanged.sid) {
-        self._sid = m.sidChanged.sid;
+        delete self._ownSids[conn.sid];
+        conn.sid = m.sidChanged.sid;
+        self._ownSids[conn.sid] = 1;
       }
     };
 
+    this._ensureTimers();
   },
 
-  _ensureTimers: function () {
+  _setupPeer: function (conn, iceServers) {
     var self = this;
-    if (!this._pingTimer) {
-      this._pingTimer = setInterval(function () {
-        self._rawSend({ pingReq: { timestamp: Date.now(), rtt: 0 } });
-      }, 10000);
+    if (conn.pc) {
+      conn.pc.close();
+      conn.pc = null;
     }
-    if (!this._flushTimer) {
-      this._flushTimer = setInterval(function () { self._flush(); }, this._chunkMs);
-    }
-  },
-
-  _clearTimers: function () {
-    if (this._pingTimer) { clearInterval(this._pingTimer); this._pingTimer = null; }
-    if (this._flushTimer) { clearInterval(this._flushTimer); this._flushTimer = null; }
-  },
-
-  _setupPeer: function (iceServers) {
-    var self = this;
-    this._teardownMedia();
     var pc = webrtc.newPeerConnection({ iceServers: iceServers });
-    this._pc = pc;
+    conn.pc = pc;
     pc.onicecandidate = function (candidateInit) {
       if (candidateInit) {
-        self._rawSend({ trickle: { candidateInit: candidateInit, target: "SUBSCRIBER" } });
+        self._rawSend(conn, { trickle: { candidateInit: candidateInit, target: "SUBSCRIBER" } });
       }
     };
     pc.onconnectionstatechange = function (state) {
@@ -227,31 +225,71 @@ var Transport = {
       }
     };
     pc.ondatachannel = function () {};
-    this._ensureTimers();
   },
 
-  _answer: async function (sdp) {
-    if (!this._pc) return;
+  _answer: async function (conn, sdp) {
+    if (!conn.pc) return;
     try {
-      await this._pc.setRemoteDescription("offer", sdp);
-      var answer = await this._pc.createAnswer();
-      await this._pc.setLocalDescription("answer", answer);
-      this._rawSend({ answer: { type: "answer", sdp: answer } });
+      await conn.pc.setRemoteDescription("offer", sdp);
+      var answer = await conn.pc.createAnswer();
+      await conn.pc.setLocalDescription("answer", answer);
+      this._rawSend(conn, { answer: { type: "answer", sdp: answer } });
     } catch (e) {
       setState("degraded", "answer: " + String(e));
     }
   },
 
-  _teardownMedia: function () {
-    if (this._pc) {
-      this._pc.close();
-      this._pc = null;
+  _teardownConn: function (conn) {
+    if (conn.pc) {
+      conn.pc.close();
+      conn.pc = null;
     }
   },
 
-  _rawSend: function (obj) {
-    if (this._sock) {
-      this._sock.send(JSON.stringify(obj));
+  _ensureTimers: function () {
+    var self = this;
+    if (this._pingTimer) return;
+    this._pingTimer = setInterval(function () {
+      var conns = self._conns;
+      for (var i = 0; i < conns.length; i++) {
+        if (conns[i].alive) {
+          self._rawSend(conns[i], { pingReq: { timestamp: Date.now(), rtt: 0 } });
+        }
+      }
+    }, 10000);
+    this._flushTimer = setInterval(function () { self._flush(); }, this._chunkMs);
+    this._gcTimer = setInterval(function () { self._gcSeen(); }, 30000);
+  },
+
+  _clearTimers: function () {
+    if (this._pingTimer) { clearInterval(this._pingTimer); this._pingTimer = null; }
+    if (this._flushTimer) { clearInterval(this._flushTimer); this._flushTimer = null; }
+    if (this._gcTimer) { clearInterval(this._gcTimer); this._gcTimer = null; }
+  },
+
+  _aliveCount: function () {
+    var n = 0;
+    for (var i = 0; i < this._conns.length; i++) {
+      if (this._conns[i].alive) n++;
+    }
+    return n;
+  },
+
+  _syncState: function (msg) {
+    if (this._closed) return;
+    var alive = this._aliveCount();
+    var total = this._conns.length;
+    if (alive > 0) {
+      setState(alive === total ? "connected" : "degraded",
+        alive === total ? "" : (msg || alive + " of " + total + " sessions up"));
+      return;
+    }
+    setState("reconnecting", msg || "no live sessions");
+  },
+
+  _rawSend: function (conn, obj) {
+    if (conn.sock) {
+      conn.sock.send(JSON.stringify(obj));
     }
   },
 
@@ -260,10 +298,21 @@ var Transport = {
     if (typeof msg !== "string" || msg.indexOf('"' + EVENT + '"') < 0) return;
     var parsed;
     try { parsed = JSON.parse(msg); } catch (e) { return; }
-    if (!parsed || parsed.eventName !== EVENT || !parsed.d) return;
-    if (parsed.sid === this._sid) return;
+    if (!parsed || parsed.eventName !== EVENT || parsed.d === undefined) return;
+    if (this._ownSids[parsed.sid]) return;
+    var key = parsed.sid + ":" + parsed.seq;
+    if (this._seen[key]) return;
+    this._seen[key] = 1;
+    this._seenCount++;
     var bytes = base64.decode(parsed.d);
     emit(parsed.z ? gzip.decompress(bytes) : bytes);
+  },
+
+  _gcSeen: function () {
+    if (this._seenCount > 8192) {
+      this._seen = {};
+      this._seenCount = 0;
+    }
   },
 
   write: function (bytes) {
@@ -272,42 +321,56 @@ var Transport = {
   },
 
   _flush: function () {
-    if (!this._sock || this._bufLen === 0) return;
-    try {
+    if (this._bufLen === 0) return;
+    var sentThisTick = 0;
+    var conns = this._conns;
+    for (var i = 0; i < conns.length && sentThisTick < SENDERS_PER_TICK; i++) {
+      var conn = conns[(this._rr + i) % conns.length];
+      if (!conn.alive || !conn.sock) continue;
+      if (this._bufLen === 0) break;
       var chunk = takeBytes(this._buf, Math.min(CHUNK_BYTES, this._bufLen));
       this._bufLen -= chunk.length;
-      this._rawSend({
+      this._seq++;
+      this._rawSend(conn, {
         sendMessage: {
           message: JSON.stringify({
             eventName: EVENT,
-            sid: this._sid,
+            sid: conn.sid,
+            seq: this._seq,
             z: 0,
             d: base64.encode(chunk),
           }),
         },
       });
-    } catch (e) {
-      setState("degraded", "flush: " + String(e));
+      sentThisTick++;
     }
+    this._rr = (this._rr + Math.max(sentThisTick, 1)) % Math.max(conns.length, 1);
   },
 
   close: function () {
     this._closed = true;
     this._clearTimers();
-    this._teardownMedia();
-    if (this._sock) {
-      this._sock.close();
-      this._sock = null;
+    for (var i = 0; i < this._conns.length; i++) {
+      var c = this._conns[i];
+      c.removed = true;
+      if (c.timer) { clearTimeout(c.timer); c.timer = null; }
+      if (c.pc) { c.pc.close(); c.pc = null; }
+      if (c.sock) { c.sock.close(); c.sock = null; }
     }
+    this._conns = [];
   },
 
   onEvent: function (kind) {
     if (kind === "cookiesApplied") {
       setState("reconnecting", "cookies applied");
-      this._teardownMedia();
-      if (this._sock) { this._sock.close(); this._sock = null; }
+      this._clearTimers();
+      for (var i = 0; i < this._conns.length; i++) {
+        this._conns[i].removed = true;
+        if (this._conns[i].sock) this._conns[i].sock.close();
+      }
+      this._conns = [];
       var self = this;
-      setTimeout(function () { self._connect(); }, 1000);
+      setTimeout(function () { self._connectAll(); }, 1000);
     }
   },
 };
