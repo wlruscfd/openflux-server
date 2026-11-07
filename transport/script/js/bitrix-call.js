@@ -19,7 +19,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.1.0",
+      version: "1.1.1",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -104,8 +104,15 @@ var Transport = {
         if (this._aliveCount() === 0) setState("dead", msg);
         return;
       }
+      this._joinFails = (this._joinFails || 0) + 1;
+      var deadSession = msg.indexOf("invalid signature") >= 0 || msg.indexOf("not found in MongoDB") >= 0;
+      if (this._aliveCount() === 0 && deadSession && this._joinFails >= 4) {
+        setState("dead", "гостевая сессия истекла — обновите её кнопкой «Обновить сессию» в профиле");
+        return;
+      }
       setState(this._aliveCount() > 0 ? "degraded" : "reconnecting", "session: " + msg);
-      conn.timer = setTimeout(function () { Transport._connectSession(conn); }, 5000);
+      var backoff = this._joinFails > 4 ? 15000 : 5000;
+      conn.timer = setTimeout(function () { Transport._connectSession(conn); }, backoff);
     }
   },
 
@@ -167,6 +174,7 @@ var Transport = {
     }
     conn.sock = sock;
     conn.alive = true;
+    this._joinFails = 0;
     this._syncState();
 
     sock.onclose = function (reason) {
