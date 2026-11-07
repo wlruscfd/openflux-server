@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.3.0",
+      version: "1.3.1",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -103,12 +103,27 @@ var Transport = {
     });
   },
 
+  // Identical session lines are the same guest: registering twice with one identity
+  // kicks the first registration (the ws close 1000 war), so duplicates never connect.
+  _jarList: function () {
+    var seen = {};
+    var out = [];
+    var raw = String(this._session || "").split(/\r?\n/);
+    for (var i = 0; i < raw.length; i++) {
+      var s = raw[i].trim();
+      if (s.length === 0 || seen[s]) continue;
+      seen[s] = true;
+      out.push(s);
+    }
+    return out;
+  },
+
   _connectAll: function () {
     if (this._closed) return;
     var self0 = this;
     if (this._session) {
       setState("connecting");
-      var jars = this._session.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+      var jars = this._jarList();
       var tokenLines = [];
       var failures = [];
       var settled = 0;
@@ -335,7 +350,7 @@ var Transport = {
     if (this._session) {
       this._slideTimer = setInterval(function () {
         if (self._closed) return;
-        var jars = self._session.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+        var jars = self._jarList();
         var fresh = [];
         var pending = jars.length;
         var finished = function () {
