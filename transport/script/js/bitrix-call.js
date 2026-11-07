@@ -19,7 +19,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.1.1",
+      version: "1.1.2",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -73,7 +73,9 @@ var Transport = {
     if (this._closed) return;
     var lines = this._sessionList();
     if (lines.length === 0) {
-      setState("dead", "no guest sessions: join the conference once in a browser and put userToken|callToken lines into Guest sessions");
+      var tl = String(this._cfg.params.tokens || "").length;
+      var sl = String(this._cfg.params.session || "").length;
+      setState("dead", "no guest sessions (tokens=" + tl + " chars, session=" + sl + " chars): join the conference once and refresh the session in the profile");
       return;
     }
     setState("connecting");
