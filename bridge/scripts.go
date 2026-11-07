@@ -472,7 +472,11 @@ func openPackage(cfg Config, id string) (*script.ScriptTransport, error) {
 	if err != nil {
 		return nil, err
 	}
-	return script.New(id, packagePath(dir, id), pub, cfg.DocURL, map[string]interface{}{"exit": false}, transport.DefaultConfig())
+	params := map[string]interface{}{"exit": false}
+	if cfg.GuestTokens != "" {
+		params["tokens"] = cfg.GuestTokens
+	}
+	return script.New(id, packagePath(dir, id), pub, cfg.DocURL, params, transport.DefaultConfig())
 }
 
 // overlayScript opens the installed package for id when it may be used: not switched off, verified, and loadable.
