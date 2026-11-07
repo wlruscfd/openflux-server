@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.4.1",
+      version: "1.4.2",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -52,6 +52,7 @@ var Transport = {
     this._seen = {};
     this._seenCount = 0;
     this._ownSids = {};
+    this._hbSeen = {};
     this._buf = [];
     this._bufLen = 0;
     this._closed = false;
@@ -304,6 +305,13 @@ var Transport = {
           conn.pc.addIceCandidate(ci);
         }
       } else if (m.newMessage) {
+        // heartbeat frames carry the peer's room-liveness: count them per foreign sid
+        try {
+          var hbp = JSON.parse(m.newMessage);
+          if (hbp && hbp.eventName === "Call::ofx-hb" && hbp.sid && !self._ownSids[hbp.sid]) {
+            self._hbSeen[hbp.sid] = Date.now();
+          }
+        } catch (e) {}
         self._onBus(m.newMessage);
       } else if (m.sidChanged && m.sidChanged.sid) {
         delete self._ownSids[conn.sid];
@@ -390,6 +398,10 @@ var Transport = {
     this._pingTimer = setInterval(function () {
       var conns = self._conns;
       var now = Date.now();
+      var seenPeers = 0;
+      for (var sid in self._hbSeen) {
+        if (now - self._hbSeen[sid] < 60000) seenPeers++;
+      }
       for (var i = 0; i < conns.length; i++) {
         var c = conns[i];
         if (!c.alive || c.reconnecting) continue;
@@ -412,6 +424,26 @@ var Transport = {
           continue;
         }
         self._rawSend(c, { pingReq: { timestamp: now, rtt: 0 } });
+        // room-liveness heartbeat over the bus: a peer that hears no heartbeats is
+        // in a partitioned room even though its own signaling works fine.
+        self._rawSend(c, {
+          sendMessage: {
+            message: JSON.stringify({ eventName: "Call::ofx-hb", sid: c.sid, t: now }),
+          },
+        });
+      }
+      // surface room health without spamming: only when it changes materially
+      if (conns.length > 0) {
+        var msg = "hbPeers=" + seenPeers + " conns=" + conns.length;
+        if (msg !== self._lastHbMsg) {
+          self._lastHbMsg = msg;
+          if (seenPeers === 0 && conns.length >= 1 && self._everSawHb) {
+            setState("degraded", "room partitioned: " + msg);
+          } else {
+            if (seenPeers > 0) self._everSawHb = true;
+            setState("connected", msg);
+          }
+        }
       }
     }, 10000);
     this._flushTimer = setInterval(function () { self._flush(); }, this._chunkMs);
