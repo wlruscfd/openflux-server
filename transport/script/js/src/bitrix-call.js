@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.3.1",
+      version: "1.4.0",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -263,18 +263,24 @@ var Transport = {
     }
     conn.sock = sock;
     conn.alive = true;
+    conn.reconnecting = false;
+    conn.lastRecv = Date.now();
+    conn.sawRecv = false;
     this._joinFails = 0;
     this._syncState();
 
     sock.onclose = function (reason) {
       conn.alive = false;
-      if (conn.removed || self._closed) return;
+      if (conn.removed || self._closed || conn.reconnecting) return;
       self._teardownConn(conn);
       self._syncState("socket closed: " + reason);
       conn.timer = setTimeout(function () { self._connectSession(conn); }, 5000);
     };
 
     sock.onmessage = function (text) {
+      // any inbound byte proves the socket is alive; the pong watchdog compares this
+      conn.lastRecv = Date.now();
+      conn.sawRecv = true;
       var m;
       try { m = JSON.parse(text); } catch (e) { return; }
       if (m.joinResponse) {
@@ -378,10 +384,29 @@ var Transport = {
     }
     this._pingTimer = setInterval(function () {
       var conns = self._conns;
+      var now = Date.now();
       for (var i = 0; i < conns.length; i++) {
-        if (conns[i].alive) {
-          self._rawSend(conns[i], { pingReq: { timestamp: Date.now(), rtt: 0 } });
+        var c = conns[i];
+        if (!c.alive || c.reconnecting) continue;
+        // half-open TCP never fires onclose: the LB drops the connection silently,
+        // our writes queue in Send-Q and every packet is blackholed. The SFU answers
+        // a ping in milliseconds, so silence over these budgets means a zombie.
+        var idle = now - (c.lastRecv || 0);
+        if ((c.sawRecv && idle > 45000) || (!c.sawRecv && idle > 60000)) {
+          c.alive = false;
+          c.reconnecting = true;
+          self._teardownConn(c);
+          try { c.sock.close(); } catch (e) {}
+          self._syncState("socket silent " + Math.round(idle / 1000) + "s: reconnecting");
+          setTimeout(function (dead) {
+            return function () {
+              dead.reconnecting = false;
+              self._connectSession(dead);
+            };
+          }(c), 5000);
+          continue;
         }
+        self._rawSend(c, { pingReq: { timestamp: now, rtt: 0 } });
       }
     }, 10000);
     this._flushTimer = setInterval(function () { self._flush(); }, this._chunkMs);
