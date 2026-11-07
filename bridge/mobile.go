@@ -56,6 +56,9 @@ type Config struct {
 	ScriptsDir string `json:"scripts_dir,omitempty"`
 	AvitoCookies string `json:"avito_cookies,omitempty"`
 	ScriptID string `json:"script_id,omitempty"`
+	// GuestTokens carries the profile's own guest session (userToken|callToken) for
+	// dynamic script transports; it reaches the script as the "tokens" param.
+	GuestTokens string `json:"tokens,omitempty"`
 
 	E2EEncryption bool `json:"e2e_encryption,omitempty"`
 
