@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.4.8",
+      version: "1.4.9",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -388,13 +388,27 @@ var Transport = {
         var pending = jars.length;
         var finished = function () {
           if (self._closed || pending > 0) return;
+          // The page fetch alone keeps the portal session alive server-side; live sessions
+          // must NOT be torn down for token rotation - a teardown mid-flow breaks every
+          // tunnel connection riding the session (and the rotation looped here endlessly).
           var newLines = fresh.filter(function (l) { return !!l; });
-          if (newLines.join("\n") !== self._slidLines.join("\n")) {
-            self._slidLines = newLines;
-            setState("connected", "sessions slid");
-            self._teardownAll();
-            for (var i = 0; i < newLines.length; i++) {
-              self._startSession(newLines[i], i);
+          self._slidLines = newLines;
+          var dead = [];
+          for (var i = 0; i < self._conns.length; i++) {
+            if (!self._conns[i].alive) dead.push(self._conns[i]);
+          }
+          if (dead.length > 0 && newLines.length > 0) {
+            setState("connected", "slid: reviving " + dead.length + " dead session(s)");
+            for (var i = 0; i < dead.length; i++) {
+              var cc = dead[i];
+              if (cc.reconnecting) continue;
+              cc.reconnecting = true;
+              setTimeout(function (dc) {
+                return function () {
+                  dc.reconnecting = false;
+                  self._connectSession(dc);
+                };
+              }(cc), 2000);
             }
           }
         };
