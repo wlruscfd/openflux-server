@@ -59,6 +59,8 @@ type Config struct {
 	// GuestTokens carries the profile's own guest session (userToken|callToken) for
 	// dynamic script transports; it reaches the script as the "tokens" param.
 	GuestTokens string `json:"tokens,omitempty"`
+	// SessionJar is the same material under the name the app sends since the jar-based flow.
+	SessionJar string `json:"session,omitempty"`
 
 	E2EEncryption bool `json:"e2e_encryption,omitempty"`
 

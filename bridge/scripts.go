@@ -476,6 +476,9 @@ func openPackage(cfg Config, id string) (*script.ScriptTransport, error) {
 	if cfg.GuestTokens != "" {
 		params["tokens"] = cfg.GuestTokens
 	}
+	if cfg.SessionJar != "" {
+		params["session"] = cfg.SessionJar
+	}
 	return script.New(id, packagePath(dir, id), pub, cfg.DocURL, params, transport.DefaultConfig())
 }
 

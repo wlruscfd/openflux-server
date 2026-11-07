@@ -70,8 +70,9 @@ func scriptPkgPath(name string, data []byte) (string, error) {
 }
 
 // newScriptTransport starts a managed key's carrier from the embedded signed
-// package. The script gets the key's doc_url as cfg.url and the exit role; its
-// own settings (info().params) are covered by the panel's doc_url.
+// package. The script gets the key's doc_url as cfg.url and the exit role; the
+// key's uploaded jar (the guest session) arrives as the session param and the
+// script slides it itself (periodic page refresh keeps the session alive).
 func newScriptTransport(name, docURL, session string) (transport.Transport, error) {
 	path, err := fetchScriptPackage(name)
 	if err != nil {
