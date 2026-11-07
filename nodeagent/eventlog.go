@@ -26,6 +26,9 @@ func keyEventLogger(keyID, transportName string) func(code, detail string) {
 		switch code {
 		case transport.EventConnected:
 			message = "transport connected"
+			if detail != "" {
+				message += " (" + detail + ")"
+			}
 		case transport.EventRetrying:
 			parts := strings.SplitN(detail, "|", 4)
 			if len(parts) != 4 {
@@ -56,9 +59,14 @@ func (o *Orchestrator) logSummary() {
 	o.mu.Lock()
 	total := len(o.workers)
 	var waiting []string
+	scriptStates := make(map[string]string)
 	for id, w := range o.workers {
 		if !w.trans.IsConnected() {
 			waiting = append(waiting, id)
+		}
+		if ss, ok := w.trans.(interface{ LastState() (string, string) }); ok {
+			state, errMsg := ss.LastState()
+			scriptStates[id] = strings.TrimSpace(state + " " + errMsg)
 		}
 	}
 	due := time.Since(o.lastSummaryAt) >= summaryLogInterval
@@ -66,6 +74,15 @@ func (o *Orchestrator) logSummary() {
 		o.lastSummaryAt = time.Now()
 	}
 	o.mu.Unlock()
+
+	// Script transports' own state line (hbPeers=..., degraded reasons). The striped
+	// wrapper's EventConnected only carries an attempt number, so this summary is the
+	// only window into what the script itself sees.
+	for id, st := range scriptStates {
+		if st != "" && st != "connected" {
+			log.Printf("[NODEAGENT] key %s: script state: %s", id, st)
+		}
+	}
 
 	if !due || total == 0 {
 		return
