@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.5.1",
+      version: "1.5.2",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -351,9 +351,14 @@ var Transport = {
       }
     };
     pc.onconnectionstatechange = function (state) {
-      if (state === "failed") {
-        setState("degraded", "peer connection failed");
+      conn.pcState = state;
+      if (state === "failed" || state === "disconnected") {
+        setState("degraded", "peer connection " + state);
       }
+      if (self._onPeerState) self._onPeerState(state);
+    };
+    pc.oniceconnectionstatechange = function (state) {
+      conn.iceState = state;
     };
     pc.ondatachannel = function () {};
   },
@@ -468,9 +473,14 @@ var Transport = {
         self._rxBytesLast = self._rxBytes;
         var emRate = Math.round((self._emittedBytes - self._emittedBytesLast) / 1024);
         self._emittedBytesLast = self._emittedBytes;
+        var pcStates = [];
+        for (var i = 0; i < conns.length; i++) {
+          pcStates.push((conns[i].pcState || "?") + "/" + (conns[i].iceState || "?"));
+        }
         var msg = "hbPeers=" + seenPeers + " conns=" + conns.length +
           " rx=" + Math.round(self._rxBytes / 1024) + "KB (+" + rxRate + "KB/10s)" +
-          " em=" + Math.round(self._emittedBytes / 1024) + "KB (+" + emRate + "KB/10s)";
+          " em=" + Math.round(self._emittedBytes / 1024) + "KB (+" + emRate + "KB/10s)" +
+          " pc=" + pcStates.join(",");
         self._lastHbMsg = msg;
         if (seenPeers === 0 && conns.length >= 1 && self._everSawHb) {
           setState("degraded", "room partitioned: " + msg);
