@@ -11,14 +11,14 @@
 
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 var EVENT = "Call::openflux";
-var CHUNK_BYTES = 7168;
-var SENDERS_PER_TICK = 4;
+var CHUNK_BYTES = 32768; // per-transport default; params.chunkBytes overrides (see below)
+var SENDERS_PER_TICK = 2; // per flush tick: messages/s is what the SFU throttles fan-out on
 
 var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.4.0",
+      version: "1.4.1",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -42,7 +42,10 @@ var Transport = {
     this._cfg = cfg;
     this._portal = String(cfg.url || "").replace(/\/+$/, "");
     this._isExit = cfg.params.exit === true || cfg.params.exit === "true" || cfg.params.role === "node";
-    this._chunkMs = Number(cfg.params.chunkMs) || 20;
+    this._chunkMs = Number(cfg.params.chunkMs) || 40;
+    // messages per second is what the SFU throttles on fan-out, not bytes: big chunks
+    // at a low rate carry more traffic through the same message budget.
+    this._chunkBytes = Number(cfg.params.chunkBytes) || CHUNK_BYTES;
     this._session = String(cfg.params.session || "").trim();
     this._conns = [];
     this._seq = 0;
@@ -241,7 +244,9 @@ var Transport = {
         return data.result;
       }
       var errText = data && data.error ? (data.error.message || data.error.code) : ("http " + res.status);
-      if (this._isExit && attempt === 0) {
+      if (attempt === 0) {
+        // "internal error" is the server's answer for a guest whose previous
+        // registration is stuck: mustCreate re-registers it into the chatId's call.
         mustCreate = true;
         continue;
       }
@@ -493,7 +498,7 @@ var Transport = {
       var conn = conns[(this._rr + i) % conns.length];
       if (!conn.alive || !conn.sock) continue;
       if (this._bufLen === 0) break;
-      var chunk = takeBytes(this._buf, Math.min(CHUNK_BYTES, this._bufLen));
+      var chunk = takeBytes(this._buf, Math.min(this._chunkBytes, this._bufLen));
       this._bufLen -= chunk.length;
       this._seq++;
       this._rawSend(conn, {
