@@ -19,7 +19,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.1.2",
+      version: "1.2.0",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -54,6 +54,7 @@ var Transport = {
     this._bufLen = 0;
     this._closed = false;
     this._rr = 0;
+    this._currentTokens = "";
     this._connectAll();
   },
 
@@ -65,12 +66,60 @@ var Transport = {
       var line = lines[i].trim();
       if (line && line.indexOf("|") > 0) out.push(line);
     }
-    if (out.length === 0 && this._session) out.push(this._session);
     return out;
+  },
+
+  // Slide the session: load the conference page with the stored cookie jar.
+  // Every load re-issues the session cookies and fresh tokens for the SAME
+  // guest, so the session lives as long as this refresh keeps running -
+  // far past the 4h cookie lifetime. done(ok, err), tokens in this._currentTokens.
+  _refreshTokens: function (done) {
+    var self = this;
+    http.fetch({
+      url: this._portal,
+      method: "GET",
+      headers: { "Cookie": this._session, "User-Agent": UA },
+    }).then(function (res) {
+      if (res.status !== 200) {
+        done(false, "conference page: http " + res.status + " - the session has probably expired, refresh it in the profile");
+        return;
+      }
+      var toks = res.body.match(/eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g) || [];
+      var ut = null; var ct = null;
+      for (var i = 0; i < toks.length; i++) {
+        try {
+          var payload = JSON.parse(text.decode(base64.decode(pad64(toks[i].split(".")[1]))));
+          if (payload.userId !== undefined && payload.userId !== 0 && !ut) ut = toks[i];
+          if (payload.portalId !== undefined && !ct) ct = toks[i];
+        } catch (e) {}
+      }
+      if (!ut || !ct) {
+        done(false, "the page carries no registered session tokens - the session has expired, refresh it in the profile");
+        return;
+      }
+      self._currentTokens = ut + "|" + ct;
+      done(true, "");
+    }).catch(function (e) {
+      done(false, "page fetch: " + String(e));
+    });
   },
 
   _connectAll: function () {
     if (this._closed) return;
+    var self0 = this;
+    if (this._session) {
+      setState("connecting");
+      this._refreshTokens(function (ok, err) {
+        if (self0._closed) return;
+        if (!ok) {
+          setState("dead", err);
+          return;
+        }
+        setState("connecting");
+        self0._startSession(self0._currentTokens, 0);
+      });
+      return;
+    }
     var lines = this._sessionList();
     if (lines.length === 0) {
       var tl = String(this._cfg.params.tokens || "").length;
@@ -119,6 +168,13 @@ var Transport = {
   },
 
   _tokensOf: function (line) {
+    if (line === this._currentTokens) {
+      var pp = line.split("|");
+      return {
+        userToken: { raw: pp[0], payload: JSON.parse(text.decode(base64.decode(pad64(pp[0].split(".")[1])))) },
+        callToken: { raw: pp[1], payload: JSON.parse(text.decode(base64.decode(pad64(pp[1].split(".")[1])))) },
+      };
+    }
     var parts = line.split("|");
     return {
       userToken: { raw: parts[0], payload: JSON.parse(text.decode(base64.decode(pad64(parts[0].split(".")[1])))) },
@@ -260,6 +316,23 @@ var Transport = {
   _ensureTimers: function () {
     var self = this;
     if (this._pingTimer) return;
+    if (this._session) {
+      this._slideTimer = setInterval(function () {
+        if (self._closed) return;
+        self._refreshTokens(function (ok, err) {
+          if (self._closed) return;
+          if (ok && self._currentTokens !== self._slidWith) {
+            self._slidWith = self._currentTokens;
+            setState("connected", "session slid");
+            self._teardownAll();
+            self._startSession(self._currentTokens, 0);
+          }
+          if (!ok) {
+            setState("degraded", "session refresh failed: " + err);
+          }
+        });
+      }, 25 * 60 * 1000);
+    }
     this._pingTimer = setInterval(function () {
       var conns = self._conns;
       for (var i = 0; i < conns.length; i++) {
@@ -276,6 +349,19 @@ var Transport = {
     if (this._pingTimer) { clearInterval(this._pingTimer); this._pingTimer = null; }
     if (this._flushTimer) { clearInterval(this._flushTimer); this._flushTimer = null; }
     if (this._gcTimer) { clearInterval(this._gcTimer); this._gcTimer = null; }
+    if (this._slideTimer) { clearInterval(this._slideTimer); this._slideTimer = null; }
+  },
+
+  _teardownAll: function () {
+    for (var i = 0; i < this._conns.length; i++) {
+      var c = this._conns[i];
+      c.alive = false;
+      c.removed = true;
+      if (c.timer) { clearTimeout(c.timer); c.timer = null; }
+      if (c.pc) { c.pc.close(); c.pc = null; }
+      if (c.sock) { c.sock.close(); c.sock = null; }
+    }
+    this._conns = [];
   },
 
   _aliveCount: function () {

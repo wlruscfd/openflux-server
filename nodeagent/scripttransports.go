@@ -81,6 +81,6 @@ func newScriptTransport(name, docURL, session string) (transport.Transport, erro
 		"path":    path,
 		"pubkey":  script.ForkKeyHex,
 		"name":    name,
-		"tokens":  session,
+		"session": session,
 	}, registry.Options{Base: transport.DefaultConfig(), IsExit: true})
 }

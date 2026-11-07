@@ -1,7 +1,7 @@
 {
   "id": "bitrix-call",
   "name": "bitrix-call",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "author": "OpenFlux",
   "description": "Bitrix24 video call: packets ride the call's signaling event bus, the node keeps the call alive.",
   "wire": 1,
