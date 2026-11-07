@@ -8,10 +8,13 @@ func TestManagedTransportSupported(t *testing.T) {
 			t.Errorf("%s: managedTransportSupported = false, want true", name)
 		}
 	}
-	for _, name := range []string{"", "yandex-caldav", "oneme", "script", "direct"} {
+	for _, name := range []string{"", "bad id!", "with.dot"} {
 		if managedTransportSupported(name) {
 			t.Errorf("%s: managedTransportSupported = true, want false", name)
 		}
+	}
+	if !managedTransportSupported("vkteams") {
+		t.Error("vkteams: an arbitrary catalog id must pass the gate (the package resolves at start)")
 	}
 }
 

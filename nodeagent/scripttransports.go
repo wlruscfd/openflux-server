@@ -36,16 +36,12 @@ func managedTransportSupported(name string) bool {
 	case "yandex", "yandex_multistream", "boards", "mailru", "mts", "telemost", "cupsonline", "avito":
 		return true
 	}
-	_, ok := managedScriptPkgs[name]
-	return ok
+	return packageIDRe.MatchString(name)
 }
 
 var scriptPkgPaths sync.Map
 
-func scriptPkgPath(name string, data []byte) (string, error) {
-	if p, ok := scriptPkgPaths.Load(name); ok {
-		return p.(string), nil
-	}
+func scriptPkgDir() (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
@@ -53,6 +49,17 @@ func scriptPkgPath(name string, data []byte) (string, error) {
 	pkgDir := filepath.Join(dir, "openflux", "scriptpkgs")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		pkgDir = os.TempDir()
+	}
+	return pkgDir, nil
+}
+
+func scriptPkgPath(name string, data []byte) (string, error) {
+	if p, ok := scriptPkgPaths.Load(name); ok {
+		return p.(string), nil
+	}
+	pkgDir, err := scriptPkgDir()
+	if err != nil {
+		return "", err
 	}
 	path := filepath.Join(pkgDir, name+".flux")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -66,11 +73,7 @@ func scriptPkgPath(name string, data []byte) (string, error) {
 // package. The script gets the key's doc_url as cfg.url and the exit role; its
 // own settings (info().params) are covered by the panel's doc_url.
 func newScriptTransport(name, docURL, session string) (transport.Transport, error) {
-	data, ok := managedScriptPkgs[name]
-	if !ok {
-		return nil, fmt.Errorf("no script package for the %s transport", name)
-	}
-	path, err := scriptPkgPath(name, data)
+	path, err := fetchScriptPackage(name)
 	if err != nil {
 		return nil, err
 	}

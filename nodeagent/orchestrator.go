@@ -497,7 +497,7 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 			continue
 		}
 		if !managedTransportSupported(k.Transport) {
-			utils.Debugf("[NODEAGENT] skipping key %s: managed mode only supports the yandex/yandex_multistream/boards/mailru/mts/telemost/cupsonline/avito/bitrix/pruffme transports today", id)
+			utils.Debugf("[NODEAGENT] skipping key %s: managed mode does not support this transport today", id)
 			continue
 		}
 		if k.Transport == "yandex_multistream" && len(k.DocURLs) < 2 {
@@ -680,6 +680,31 @@ func (o *Orchestrator) startRelayBridgeWorker(k RemoteKey) (*worker, error) {
 	}, nil
 }
 
+// startScriptWorker builds the carrier for a key whose transport has no
+// built-in implementation: a signed script package, embedded or fetched from
+// the transports catalog. A failed attempt releases the port reservation.
+func (o *Orchestrator) startScriptWorker(k RemoteKey, portIdx *int) (transport.Transport, error) {
+	if k.E2EEncryption {
+		if *portIdx >= 0 {
+			o.ports.release(*portIdx)
+			*portIdx = -1
+		}
+		return nil, fmt.Errorf("key %s: the %s transport doesn't support e2e_encryption yet", k.ID, k.Transport)
+	}
+	o.mu.Lock()
+	session := o.keySession[k.ID]
+	o.mu.Unlock()
+	tr, err := newScriptTransport(k.Transport, k.DocURL, session)
+	if err != nil {
+		if *portIdx >= 0 {
+			o.ports.release(*portIdx)
+			*portIdx = -1
+		}
+		return nil, err
+	}
+	return tr, nil
+}
+
 func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 	if k.IsRelayed() {
 		return o.startRelayBridgeWorker(k)
@@ -764,17 +789,8 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		trans = transport.NewBatchedTransport(cupsonline.NewCupsonlineTransport(k.DocURL, transport.DefaultConfig(), false))
 		o.publishRoomLists(trans, k)
 	case "bitrix", "pruffme", "bitrix-call":
-		if k.E2EEncryption {
-			if portIdx >= 0 {
-				o.ports.release(portIdx)
-			}
-			return nil, fmt.Errorf("key %s: the %s transport doesn't support e2e_encryption yet", k.ID, k.Transport)
-		}
-		o.mu.Lock()
-		session := o.keySession[k.ID]
-		o.mu.Unlock()
 		var scriptErr error
-		trans, scriptErr = newScriptTransport(k.Transport, k.DocURL, session)
+		trans, scriptErr = o.startScriptWorker(k, &portIdx)
 		if scriptErr != nil {
 			if portIdx >= 0 {
 				o.ports.release(portIdx)
@@ -798,7 +814,19 @@ func (o *Orchestrator) startWorker(k RemoteKey) (*worker, error) {
 		trans = transport.NewMultiStreamTransport(streams)
 		label = strings.Join(k.DocURLs, ",")
 	default:
-		trans = wrapStream(yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig()), 0, false)
+		switch k.Transport {
+		case "", "yandex":
+			trans = wrapStream(yandex.NewYandexDocsTransport(k.DocURL, transport.DefaultConfig()), 0, false)
+		default:
+			var scriptErr error
+			trans, scriptErr = o.startScriptWorker(k, &portIdx)
+			if scriptErr != nil {
+				if portIdx >= 0 {
+					o.ports.release(portIdx)
+				}
+				return nil, scriptErr
+			}
+		}
 	}
 	transport.SetEventCallback(trans, keyEventLogger(k.ID, k.Transport))
 	if err := trans.Start(); err != nil {

@@ -417,7 +417,7 @@ func buildTransport(cfg Config, transportConfig transport.TransportConfig) (tran
 		}
 		return transport.NewMultiStreamTransport(streams), nil
 	default:
-		return nil, fmt.Errorf("unsupported transport %q for this client", t)
+		return packageOnlyTransport(cfg, t)
 	}
 }
 
