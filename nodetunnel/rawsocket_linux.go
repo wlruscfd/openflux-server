@@ -2,6 +2,7 @@ package nodetunnel
 
 import (
 	"bytes"
+	"net"
 	"fmt"
 	"log"
 	"runtime"
@@ -248,6 +249,7 @@ type RawSocketEndpoint struct {
 
 	mu              sync.Mutex
 	sendToTransport func([]byte)
+	debugSkipped    atomic.Uint64
 }
 
 func NewRawSocketEndpoint(nicID tcpip.NICID) (*RawSocketEndpoint, error) {
@@ -324,6 +326,28 @@ func (e *RawSocketEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpi
 		}
 
 		if err := syscall.Sendto(e.core.sendFd, pktCopy, 0, addr); err != nil {
+			// Rate-limited packet preview: WHICH packets does the kernel refuse? proto,
+			// flags, ports and addresses of the refused packet identify the pattern.
+			if e.debugSkipped.Load() < 20 {
+				e.debugSkipped.Add(1)
+				var proto, flags byte
+				var srcD, dstD string
+				if len(pktCopy) >= 20 {
+					proto = pktCopy[9]
+					srcD = net.IP(pktCopy[12:16]).String()
+					dstD = net.IP(pktCopy[16:20]).String()
+				}
+				if len(pktCopy) >= 34 {
+					flags = pktCopy[33]
+				}
+				var sport, dport int
+				if len(pktCopy) >= 24 {
+					sport = int(pktCopy[20])<<8 | int(pktCopy[21])
+					dport = int(pktCopy[22])<<8 | int(pktCopy[23])
+				}
+				log.Printf("[RAW-NIC%d] Sendto EPERM #%d: proto=%d flags=0x%02x %s:%d -> %s:%d len=%d err=%v",
+					e.nicID, e.debugSkipped.Load(), proto, flags, srcD, sport, dstD, dport, len(pktCopy), err)
+			}
 			utils.Debugf("[RAW-NIC%d] Sendto failed: %v", e.nicID, err)
 			continue
 		}

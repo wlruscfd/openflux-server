@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.4.7",
+      version: "1.4.8",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -284,6 +284,11 @@ var Transport = {
       conn.alive = false;
       if (conn.removed || self._closed || conn.reconnecting) return;
       self._teardownConn(conn);
+      // the dedup map must reset with the socket: tunnel segments ACKed through this
+      // socket may be retransmitted after the break, and without a reset the dedup
+      // eats them as "already seen" - their ACKs never re-fire and the flow deadlocks.
+      self._seen = {};
+      self._seenCount = 0;
       self._syncState("socket closed: " + reason);
       conn.timer = setTimeout(function () { self._connectSession(conn); }, 5000);
     };
@@ -423,6 +428,8 @@ var Transport = {
           c.reconnecting = true;
           self._teardownConn(c);
           try { c.sock.close(); } catch (e) {}
+          self._seen = {};
+          self._seenCount = 0;
           self._syncState("socket silent " + Math.round(idle / 1000) + "s: reconnecting");
           setTimeout(function (dead) {
             return function () {
@@ -480,6 +487,9 @@ var Transport = {
       if (c.sock) { c.sock.close(); c.sock = null; }
     }
     this._conns = [];
+    // same dedup-reset reasoning as per-conn close
+    this._seen = {};
+    this._seenCount = 0;
   },
 
   _aliveCount: function () {
