@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.2.0",
+      version: "1.3.0",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -72,12 +72,12 @@ var Transport = {
   // Every load re-issues the session cookies and fresh tokens for the SAME
   // guest, so the session lives as long as this refresh keeps running -
   // far past the 4h cookie lifetime. done(ok, err), tokens in this._currentTokens.
-  _refreshTokens: function (done) {
+  _refreshTokens: function (jar, done) {
     var self = this;
     http.fetch({
       url: this._portal,
       method: "GET",
-      headers: { "Cookie": this._session, "User-Agent": UA },
+      headers: { "Cookie": jar, "User-Agent": UA },
     }).then(function (res) {
       if (res.status !== 200) {
         done(false, "conference page: http " + res.status + " - the session has probably expired, refresh it in the profile");
@@ -97,7 +97,7 @@ var Transport = {
         return;
       }
       self._currentTokens = ut + "|" + ct;
-      done(true, "");
+      done(true, self._currentTokens);
     }).catch(function (e) {
       done(false, "page fetch: " + String(e));
     });
@@ -108,15 +108,32 @@ var Transport = {
     var self0 = this;
     if (this._session) {
       setState("connecting");
-      this._refreshTokens(function (ok, err) {
+      var jars = this._session.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+      var tokenLines = [];
+      var failures = [];
+      var settled = 0;
+      var finish = function () {
         if (self0._closed) return;
-        if (!ok) {
-          setState("dead", err);
+        if (settled < jars.length) return;
+        if (tokenLines.length === 0) {
+          setState("dead", failures[0] || "the sessions have expired - refresh them in the profile");
           return;
         }
-        setState("connecting");
-        self0._startSession(self0._currentTokens, 0);
-      });
+        self0._slidLines = tokenLines.slice();
+        for (var i = 0; i < tokenLines.length; i++) {
+          self0._startSession(tokenLines[i], i);
+        }
+      };
+      for (var ji = 0; ji < jars.length; ji++) {
+        (function (jar) {
+          self0._refreshTokens(jar, function (ok, err) {
+            if (ok) tokenLines.push(err);
+            else failures.push(err);
+            settled++;
+            finish();
+          });
+        })(jars[ji]);
+      }
       return;
     }
     var lines = this._sessionList();
@@ -318,18 +335,30 @@ var Transport = {
     if (this._session) {
       this._slideTimer = setInterval(function () {
         if (self._closed) return;
-        self._refreshTokens(function (ok, err) {
-          if (self._closed) return;
-          if (ok && self._currentTokens !== self._slidWith) {
-            self._slidWith = self._currentTokens;
-            setState("connected", "session slid");
+        var jars = self._session.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+        var fresh = [];
+        var pending = jars.length;
+        var finished = function () {
+          if (self._closed || pending > 0) return;
+          var newLines = fresh.filter(function (l) { return !!l; });
+          if (newLines.join("\n") !== self._slidLines.join("\n")) {
+            self._slidLines = newLines;
+            setState("connected", "sessions slid");
             self._teardownAll();
-            self._startSession(self._currentTokens, 0);
+            for (var i = 0; i < newLines.length; i++) {
+              self._startSession(newLines[i], i);
+            }
           }
-          if (!ok) {
-            setState("degraded", "session refresh failed: " + err);
-          }
-        });
+        };
+        for (var i = 0; i < jars.length; i++) {
+          (function (jar) {
+            self._refreshTokens(jar, function (ok, err, tokens) {
+              if (ok) fresh.push(tokens);
+              pending--;
+              finished();
+            });
+          })(jars[i]);
+        }
       }, 25 * 60 * 1000);
     }
     this._pingTimer = setInterval(function () {
