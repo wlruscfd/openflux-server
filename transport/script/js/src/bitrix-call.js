@@ -18,7 +18,7 @@ var Transport = {
   info: function () {
     return {
       name: "bitrix-call",
-      version: "1.4.2",
+      version: "1.4.3",
       cookieDomain: "",
       mtu: 0,
       reliable: true,
@@ -307,7 +307,9 @@ var Transport = {
       } else if (m.newMessage) {
         // heartbeat frames carry the peer's room-liveness: count them per foreign sid
         try {
-          var hbp = JSON.parse(m.newMessage);
+          var nm = m.newMessage;
+          var inner = typeof nm === "string" ? nm : nm.message;
+          var hbp = JSON.parse(inner);
           if (hbp && hbp.eventName === "Call::ofx-hb" && hbp.sid && !self._ownSids[hbp.sid]) {
             self._hbSeen[hbp.sid] = Date.now();
           }
