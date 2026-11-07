@@ -131,7 +131,8 @@ type Orchestrator struct {
 	proxy          *outbound.Manager
 	proxyInstalled bool
 
-	keySession map[string]string
+	keySession     map[string]string
+	keySessionHash map[string]string
 
 	lastPollOK atomic.Int64
 }
@@ -276,8 +277,18 @@ func (o *Orchestrator) applyCookies(ctx context.Context) {
 	if o.keySession == nil {
 		o.keySession = map[string]string{}
 	}
+	if o.keySessionHash == nil {
+		o.keySessionHash = map[string]string{}
+	}
 	for id, j := range byKey {
 		o.keySession[id] = j.Cookies
+		h := cookieFingerprint(j.Cookies)
+		if j.ResolvedURL != "" {
+			h = cookieFingerprint(j.Cookies + "|" + j.ResolvedURL)
+		}
+		if h != "" {
+			o.keySessionHash[id] = h
+		}
 	}
 	o.mu.Unlock()
 	o.applyCookiesWith(byKey)
@@ -534,6 +545,9 @@ func (o *Orchestrator) reconcile(ctx context.Context) {
 		log.Printf("[NODEAGENT] key %s (%s): worker started", k.ID, k.Transport)
 
 		o.mu.Lock()
+		if o.keySessionHash != nil {
+			w.cookieHash = o.keySessionHash[k.ID]
+		}
 		o.workers[k.ID] = w
 		o.mu.Unlock()
 	}
