@@ -11,7 +11,7 @@
 
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 var EVENT = "Call::openflux";
-var CHUNK_BYTES = 7000; // per-transport default; params.chunkBytes overrides (see below)
+var CHUNK_BYTES = 2000; // per-transport default; params.chunkBytes overrides (see below)
 var SENDERS_PER_TICK = 2; // per flush tick: messages/s is what the SFU throttles fan-out on
 
 var Transport = {
