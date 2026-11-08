@@ -1,6 +1,8 @@
 package script
 
 import (
+	"log"
+
 	"github.com/dop251/goja"
 	"github.com/pion/webrtc/v4"
 )
@@ -50,6 +52,13 @@ func newPeerConnectionJS(vm *goja.Runtime, t *ScriptTransport, call goja.Functio
 	obj := vm.NewObject()
 
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		// candidate inventory in the engine log: on a phone this is the only way to see
+		// whether srflx/relay candidates exist at all (mDNS host names are useless remotely).
+		if c != nil {
+			t.loop.RunOnLoop(func(vm *goja.Runtime) {
+				log.Printf("[WEBRTC] candidate: %s", c.ToJSON().Candidate)
+			})
+		}
 		t.loop.RunOnLoop(func(vm *goja.Runtime) {
 			fn, ok := goja.AssertFunction(obj.Get("onicecandidate"))
 			if !ok {
